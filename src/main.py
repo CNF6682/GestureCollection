@@ -53,6 +53,7 @@ class Main_Window(QtWidgets.QMainWindow):
         self.frameRates_label = [] #记录各个相机的帧率
         self.NS=Manager().Namespace() #用于进程间通信Manager命名空间,所有全局变量都放在这里
         self.record_save = Manager().dict() #用于进程间通信Manager字典
+        self.record_events = []#用event试试
         self.frameRates = Manager().dict() #用于进程间通信Manager字典,记录各个相机的帧率
         self.ROI=Manager().dict() #用于进程间通信Manager字典,记录各个相机的ROI
 
@@ -162,7 +163,8 @@ class Main_Window(QtWidgets.QMainWindow):
         for i, DevInfo in enumerate(self.DevList):
             try:
                 parent_conn, child_conn = Pipe()#设置管道
-                stop_event = Event()#设置停止event
+                stop_event = Event()#设置停止
+                record_event = Event() # <--- [添加] 为这个相机创建一个专属的Event
                 print("第{}个设备，编号{}".format(i, DevInfo.GetSn()))
 
                 #记录每个设备的储存标志位 0显示 1缓存后保存
@@ -213,10 +215,12 @@ class Main_Window(QtWidgets.QMainWindow):
                     self.frameRates_label.append(self.ui.label_frameRates_inf)
 
 
-                process = Process(target=run_camera, args=(DevInfo,child_conn,stop_event,self.NS,self.record_save,self.frameRates,self.ROI))
+                process = Process(target=run_camera, args=(DevInfo,child_conn,stop_event,self.NS,record_event,self.frameRates,self.ROI))
+                process.daemon = True  # <--- [添加] 设置为守护进程，确保主程序退出时子进程也退出
                 process.start()
                 self.parent_conns.append(parent_conn)
                 self.stop_events.append(stop_event)
+                self.record_events.append(record_event) # <--- [添加] 将Event存入列表
                 self.processes.append(process)
                 time.sleep(1)
 
@@ -277,6 +281,7 @@ class Main_Window(QtWidgets.QMainWindow):
             if len(cameras) > 0:
                 print("找到了事件相机设备。")
                 parent_conn, child_conn = Pipe()  # 设置管道
+                record_event = Event() # <--- [添加]
                 stop_event = Event()  # 设置停止event
                 print("事件相机")
                 # 记录每个设备的储存标志位 0显示 1缓存后保存
@@ -284,13 +289,15 @@ class Main_Window(QtWidgets.QMainWindow):
                 # 每个相机的帧率
                 self.frameRates["event"] = 0
 
-                process = Process(target=runEventCamera, args=(child_conn, stop_event, self.NS, self.record_save, self.frameRates))
+                process = Process(target=runEventCamera, args=(child_conn, stop_event, self.NS, record_event, self.frameRates))
+                process.daemon = True  # <--- [添加] 设置为守护进程，确保主程序退出时子进程也退出
                 process.start()
 
                 self.show_windows.append(self.ui.label_event)
                 self.frameRates_label.append(self.ui.label_frameRates_event)
 
                 self.parent_conns.append(parent_conn)
+                self.record_events.append(record_event) # <--- [添加]
                 self.stop_events.append(stop_event)
                 self.processes.append(process)
 
@@ -302,6 +309,7 @@ class Main_Window(QtWidgets.QMainWindow):
         try:
             parent_conn, child_conn = Pipe()  # 设置管道
             parent_conn_2, child_conn_2 = Pipe()  # 设置管道
+            record_event = Event() # <--- [添加]
             stop_event = Event()  # 设置停止event
             print("ZED设备")
             # 记录每个设备的储存标志位 0显示 1缓存后保存
@@ -309,7 +317,8 @@ class Main_Window(QtWidgets.QMainWindow):
             # 每个相机的帧率
             self.frameRates["ZED"] = 0
 
-            process = Process(target=runZED, args=(child_conn, child_conn_2, stop_event, self.NS, self.record_save, self.frameRates))
+            process = Process(target=runZED, args=(child_conn, child_conn_2, stop_event, self.NS, record_event, self.frameRates))
+            process.daemon = True  # <--- [添加] 设置为守护进程，确保主程序退出时子进程也退出
             process.start()
 
             self.show_windows.append(self.ui.label_Stereo)
@@ -320,6 +329,7 @@ class Main_Window(QtWidgets.QMainWindow):
             self.parent_conns.append(parent_conn)
             self.parent_conns.append(parent_conn_2)
 
+            self.record_events.append(record_event) # <--- [添加]
             self.stop_events.append(stop_event)
             self.processes.append(process)
 
@@ -423,6 +433,7 @@ class Main_Window(QtWidgets.QMainWindow):
         self.timer_continue.stop()
         if self.continue_f==False:
             self.ui.pushButton_continue.setText("当前是间断采集")
+            self.ui.pushButton_regist.setEnabled(True)
         else:
             self.ui.pushButton_continue.setText("当前是连续采集")
 
@@ -476,7 +487,6 @@ class Main_Window(QtWidgets.QMainWindow):
             # QMessageBox.warning(self, "Warning", "本次采集完成")
             self.NS_audio.audio_saved=True
             self.ui.textBrowser_log.append("本次采集完成")
-            self.ui.pushButton_regist.setEnabled(True)
             self.NS.ZED_saved=False
             self.analyze()
             self.sample_update(1)
@@ -579,15 +589,18 @@ class Main_Window(QtWidgets.QMainWindow):
                 self.sample_time = self.ui.lineEdit_NUM.text()
 
         elif flag==1:
+
             print("######################################")
             if self.session=="1":
                 if self.sample_time=="4":
                     self.sample_time="0"
+                    self.ui.pushButton_regist.setEnabled(True)
                     if self.gesture_type=="10":
                         self.gesture_type="0"
                         if self.lr=="1":
                             self.lr="0"
                             self.ID = str(int(self.ID) + 1)
+
                         else:
                             self.lr="1"
                     else:
@@ -595,14 +608,16 @@ class Main_Window(QtWidgets.QMainWindow):
                 else:
                     self.sample_time=str(int(self.sample_time)+1)
                     self.timer_continue.start(4000)
-            elif self.session=="2":
+            elif self.session=="2" or self.session=="3":
                 if self.gesture_type=="10":
                     self.gesture_type="0"
+                    self.ui.pushButton_regist.setEnabled(True)
                     if self.sample_time == "5":
                         self.sample_time = "0"
                         if self.lr=="1":
                             self.lr="0"
                             self.ID = str(int(self.ID) + 1)
+
                         else:
                             self.lr="1"
                     else:
@@ -721,6 +736,9 @@ class Main_Window(QtWidgets.QMainWindow):
 
         self.record_save["ZED"] = 1
 
+        for event in self.record_events:
+            event.set()
+
         # self.timer_fault.start(2000)
         # print("timer start")
         self.add_id()
@@ -787,17 +805,39 @@ class Main_Window(QtWidgets.QMainWindow):
         self.timer_imshow.stop()
         self.timer_record.stop()
         self.timer_continue.stop()
-        #关闭管道，防止卡死
-        for parent_conns in self.parent_conns:
-            parent_conns.close()
         # print("close")
         for stop_event in self.stop_events:
+            if stop_event is not None:#<-- new
             stop_event.set()
+        time.sleep(0.5)
+        #关闭管道，防止卡死
+        for parent_conns in self.parent_conns:
+            if parent_conns is not None:
+            try:
+                parent_conns.close()
+            except:
+                pass
         # time.sleep(5)
         # print("close")
+
+        # for process in self.processes:
+        #     process.join()
+        #     print("close")
+        # 尝试优雅地终止进程，但设置超时
+        for i, process in enumerate(self.processes):
+            if process is not None and process.is_alive():
+                try:
+                    process.join(timeout=1.0)
+                    if process.is_alive():
+                        self.ui.textBrowser_log.append(f"强制终止进程 {i}")
+                        process.terminate()
+                except:
+                    pass
+        # 最后再检查是否有任何进程仍然活着
+        time.sleep(0.5)
         for process in self.processes:
-            process.join()
-            print("close")
+            if process is not None and process.is_alive():
+                process.kill()  # 最后的手段
         event.accept()
         # print("close")
 

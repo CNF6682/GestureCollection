@@ -1,10 +1,10 @@
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 def check_folders():
     base_dir = r"E:\dataset\img"
-    # base_dir = r"F:\dataset\img"
 
     # 定义预期的子文件夹及其文件数量
     SUBFOLDERS_REQUIREMENTS = {
@@ -22,16 +22,17 @@ def check_folders():
     }
 
     print("🎯 文件夹完整性检查程序")
-    print(f"📁 检查目录: {base_dir}")
+    print("📁 检查目录: E:\\dataset\\img")
     print("🔍 格式: t_id_hand_gesture_num")
     print("📂 子文件夹要求:", ", ".join([f"{k}({v}文件)" for k, v in SUBFOLDERS_REQUIREMENTS.items()]))
+    print("⚡ 使用多线程加速检查")
     print("💡 输入 'quit' 退出程序")
     print("=" * 70)
 
     while True:
         try:
             # 获取用户输入
-            t_input = input("\n🟢 请输入 t (1、2或3): ")
+            t_input = input("\n🟢 请输入 t (1或2): ")
             if t_input.lower() == 'quit':
                 print("👋 再见！")
                 break
@@ -48,7 +49,7 @@ def check_folders():
             if t == 1:
                 expected_num_range = range(0, 5)  # 0-4
                 num_info = "0-4"
-            elif t == 2 or t == 3:
+            elif t == 2:
                 expected_num_range = range(0, 6)  # 0-5
                 num_info = "0-5"
             else:
@@ -58,20 +59,20 @@ def check_folders():
             expected_hand_range = [0, 1]
             expected_gesture_range = range(0, 11)  # 0-10
 
-            # 查找所有相关的文件夹
-            pattern = re.compile(rf"^{t}_{id_val}_(\d+)_(\d+)_(\d+)$")
-            found_folders = []
-            naming_errors = []
-            valid_folders = []
-            subfolder_issues = []  # 存储子文件夹问题
-
             # 检查目录是否存在
             if not os.path.exists(base_dir):
                 print(f"❌ 错误：目录 {base_dir} 不存在")
                 continue
 
-            print(f"\n🔍 正在检查 t={t}, id={id_val} 的文件夹...")
+            print(f"\n🔍 正在快速检查 t={t}, id={id_val} 的文件夹...")
 
+            # 使用多线程并行处理文件夹检查
+            pattern = re.compile(rf"^{t}_{id_val}_(\d+)_(\d+)_(\d+)$")
+            naming_errors = []
+            valid_folders_info = []  # 存储有效文件夹信息
+            all_folders_to_check = []  # 存储需要检查的文件夹路径
+
+            # 第一遍快速扫描：只检查文件夹命名
             for folder_name in os.listdir(base_dir):
                 folder_path = os.path.join(base_dir, folder_name)
                 if os.path.isdir(folder_path):
@@ -91,16 +92,53 @@ def check_folders():
                         if errors:
                             naming_errors.append(f"{folder_name} ({'; '.join(errors)})")
                         else:
-                            # 检查子文件夹
-                            subfolder_problems = check_subfolders(folder_path, SUBFOLDERS_REQUIREMENTS)
-                            if subfolder_problems:
+                            all_folders_to_check.append((folder_name, folder_path))
+
+            # 使用多线程并行检查子文件夹
+            subfolder_issues = []
+            valid_folders = []
+
+            if all_folders_to_check:
+                print(f"⚡ 使用多线程检查 {len(all_folders_to_check)} 个文件夹的子文件夹...")
+
+                with ThreadPoolExecutor(max_workers=8) as executor:
+                    # 提交所有检查任务
+                    future_to_folder = {
+                        executor.submit(fast_check_subfolders, folder_path, SUBFOLDERS_REQUIREMENTS,
+                                        folder_name): folder_name
+                        for folder_name, folder_path in all_folders_to_check
+                    }
+
+                    # 收集结果
+                    for future in as_completed(future_to_folder):
+                        folder_name = future_to_folder[future]
+                        try:
+                            problems = future.result()
+                            if problems:
                                 subfolder_issues.append({
                                     'folder': folder_name,
-                                    'problems': subfolder_problems
+                                    'problems': problems
                                 })
+                            else:
+                                valid_folders.append(folder_name)
+                        except Exception as e:
+                            subfolder_issues.append({
+                                'folder': folder_name,
+                                'problems': [f"检查错误: {str(e)}"]
+                            })
 
-                            valid_folders.append(folder_name)
-                            found_folders.append((hand, gesture, num))
+            # 构建找到的文件夹列表用于缺失检查
+            found_folders = []
+            for folder_name, _ in all_folders_to_check:
+                parts = folder_name.split('_')
+                if len(parts) >= 5:
+                    try:
+                        hand = int(parts[2])
+                        gesture = int(parts[3])
+                        num = int(parts[4])
+                        found_folders.append((hand, gesture, num))
+                    except:
+                        pass
 
             # 检查缺失的文件夹
             missing_folders = []
@@ -118,12 +156,13 @@ def check_folders():
 
             # 统计信息
             total_expected = len(expected_hand_range) * len(expected_gesture_range) * len(expected_num_range)
-            total_found = len(valid_folders)
+            total_found = len(all_folders_to_check)
 
-            print(f"✅ 找到的有效文件夹: {total_found}/{total_expected}")
+            print(f"✅ 找到的文件夹: {total_found}/{total_expected}")
             print(f"❌ 命名错误的文件夹: {len(naming_errors)}个")
             print(f"⚠️  缺失的文件夹: {len(missing_folders)}个")
             print(f"🔍 子文件夹有问题的: {len(subfolder_issues)}个")
+            print(f"✓ 完全正确的文件夹: {len(valid_folders)}个")
             print("-" * 50)
 
             if naming_errors:
@@ -133,41 +172,29 @@ def check_folders():
 
             if subfolder_issues:
                 print(f"\n🔧 子文件夹有问题的文件夹 ({len(subfolder_issues)}个):")
-                for issue in subfolder_issues:
+                for issue in subfolder_issues[:5]:  # 只显示前5个问题
                     print(f"   📂 {issue['folder']}:")
-                    for problem in issue['problems']:
+                    for problem in issue['problems'][:3]:  # 只显示前3个问题
                         print(f"      ❗ {problem}")
+                    if len(issue['problems']) > 3:
+                        print(f"      ... 还有 {len(issue['problems']) - 3} 个问题")
+                if len(subfolder_issues) > 5:
+                    print(f"   ... 还有 {len(subfolder_issues) - 5} 个有问题的文件夹")
 
             if missing_folders:
                 print(f"\n❓ 缺失的文件夹 ({len(missing_folders)}个):")
-                # 分组显示缺失的文件夹
-                missing_by_hand = {}
-                for folder in missing_folders:
-                    parts = folder.split('_')
-                    hand = parts[2]
-                    if hand not in missing_by_hand:
-                        missing_by_hand[hand] = []
-                    missing_by_hand[hand].append(folder)
+                # 只显示前10个缺失的文件夹
+                for i, folder in enumerate(missing_folders[:10]):
+                    print(f"   🔸 {folder}")
+                if len(missing_folders) > 10:
+                    print(f"   ... 还有 {len(missing_folders) - 10} 个缺失文件夹")
 
-                for hand, folders in missing_by_hand.items():
-                    print(f"   🖐️  hand={hand}: {len(folders)}个缺失")
-                    # 每行显示5个，避免输出太长
-                    for i in range(0, len(folders), 5):
-                        print(f"      {', '.join(folders[i:i + 5])}")
-
-            # # 显示完整的文件夹信息
-            # if valid_folders and not subfolder_issues:
-            #     print(f"\n✅ 完整的文件夹 ({len(valid_folders)}个):")
-            #     valid_count = 0
-            #     for folder in valid_folders:
-            #         # 检查这个文件夹是否有子文件夹问题
-            #         has_issue = any(issue['folder'] == folder for issue in subfolder_issues)
-            #         if not has_issue:
-            #             valid_count += 1
-            #             if valid_count <= 10:  # 只显示前10个完整的文件夹
-            #                 print(f"   ✓ {folder}")
-            #     if valid_count > 10:
-            #         print(f"   ... 还有 {valid_count - 10} 个完整文件夹")
+            # if valid_folders:
+            #     print(f"\n✅ 完全正确的文件夹 ({len(valid_folders)}个):")
+            #     for i, folder in enumerate(valid_folders[:5]):
+            #         print(f"   ✓ {folder}")
+            #     if len(valid_folders) > 5:
+            #         print(f"   ... 还有 {len(valid_folders) - 5} 个正确文件夹")
 
             if not naming_errors and not missing_folders and not subfolder_issues:
                 print("\n🎉 完美！所有文件夹命名正确、完整且子文件夹齐全！")
@@ -183,36 +210,46 @@ def check_folders():
             print(f"❌ 发生错误: {e}")
 
 
-def check_subfolders(folder_path, subfolder_requirements):
-    """检查指定文件夹的子文件夹是否符合要求"""
+def fast_check_subfolders(folder_path, subfolder_requirements, folder_name):
+    """快速检查子文件夹 - 优化版本"""
     problems = []
 
+    # 先快速检查所有子文件夹是否存在
+    existing_subfolders = set()
+    try:
+        for item in os.listdir(folder_path):
+            item_path = os.path.join(folder_path, item)
+            if os.path.isdir(item_path):
+                existing_subfolders.add(item)
+    except Exception as e:
+        return [f"无法读取文件夹: {str(e)}"]
+
+    # 检查每个要求的子文件夹
     for subfolder, expected_count in subfolder_requirements.items():
+        if subfolder not in existing_subfolders:
+            problems.append(f"缺失: {subfolder}")
+            continue
+
         subfolder_path = os.path.join(folder_path, subfolder)
 
-        if not os.path.exists(subfolder_path):
-            problems.append(f"缺失子文件夹: {subfolder}")
-            continue
-
-        if not os.path.isdir(subfolder_path):
-            problems.append(f"{subfolder} 不是文件夹")
-            continue
-
-        # 计算子文件夹中的文件数量（排除子文件夹）
+        # 快速文件计数（不遍历所有文件，使用更高效的方法）
         try:
+            # 使用listdir + isfile的快速计数
             file_count = 0
             for item in os.listdir(subfolder_path):
-                item_path = os.path.join(subfolder_path, item)
-                if os.path.isfile(item_path):
+                if os.path.isfile(os.path.join(subfolder_path, item)):
                     file_count += 1
+                    # 如果已经超过预期数量，提前退出
+                    if file_count > expected_count:
+                        break
 
             if file_count != expected_count:
-                problems.append(f"{subfolder}: 预期 {expected_count} 文件，实际 {file_count} 文件")
+                problems.append(f"{subfolder}: 需要{expected_count}个文件, 现有{file_count}个文件")
 
         except PermissionError:
-            problems.append(f"{subfolder}: 无权限访问")
+            problems.append(f"{subfolder}: 无权限")
         except Exception as e:
-            problems.append(f"{subfolder}: 检查错误 - {str(e)}")
+            problems.append(f"{subfolder}: 错误 - {str(e)}")
 
     return problems
 

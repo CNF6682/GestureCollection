@@ -189,7 +189,7 @@ class ZEDTask:
                     depth_image=depth_image[:, :, :3]
                     depth_image1 = depth_image[:, 240:1040, :]
 
-                    if self.record_save["ZED"] == 1:
+                    if self.record_save.is_set():#self.record_save["ZED"] == 1:
                         num+=1
 
                         self.RGB_buffer.append(color_image.copy())
@@ -207,7 +207,7 @@ class ZEDTask:
                             print("采集完成，耗时：",end_time2-start_time2)
                             self.executor.submit(self.save_video)
 
-                            self.record_save["ZED"] = 0
+                            self.record_save.clear()  # self.record_save["ZED"] = 0
 
                     end=time.time()
                     # print("time:",1/(end - start))

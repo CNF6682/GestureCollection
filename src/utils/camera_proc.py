@@ -116,6 +116,8 @@ class camera_task:
             # cv2.imshow("{}".format(camera), img)
             # cv2.waitKey(1)
             cv2.imwrite(img_path, img)
+            if index > 240 :
+                break
 
 
         self.imgs_buffer = []
@@ -214,7 +216,7 @@ class camera_task:
                     pipe.send(frame_show)
                     self.frameRates[self.DevInfo.GetSn()] = fps
 
-                if self.record_save[self.DevInfo.GetSn()]==1:
+                if self.record_save.is_set():#self.record_save[self.DevInfo.GetSn()]==1:
                     self.imgs_buffer.append(frame)
                     # 记录采集进度
                     if self.DevInfo.GetSn() == "044011420148":
@@ -223,11 +225,12 @@ class camera_task:
                         start_time2 = time.time()
                     # print(len(self.imgs_buffer))
                     if len(self.imgs_buffer) == self.NS.sample_frame:
+                        self.record_save.clear()  # self.record_save[self.DevInfo.GetSn()]==0
                         end_time2 = time.time()
                         # print("采集完成，耗时：",end_time2-start_time2)
                         self.executor.submit(self.save_video)
 
-                        self.record_save[self.DevInfo.GetSn()] = 0
+
 
             except mvsdk.CameraException as e:
                 if e.error_code != mvsdk.CAMERA_STATUS_TIME_OUT:
