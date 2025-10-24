@@ -439,7 +439,7 @@ class Main_Window(QtWidgets.QMainWindow):
         self.NS_audio.audio_stop = False
         self.NS_audio.audio_saved = False
         self.logger.info("启动音频进程")
-        process = Process(target=run_audio,
+        process = Process(target=run_audio_lyx,
                           args=(self.NS_audio,))
         process.start()
 
