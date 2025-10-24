@@ -29,7 +29,7 @@ class camera_task:
         self.record_save = record_save
         self.frameRates = frameRates
         self.ROI = ROI
-        #缓存
+        # 缓存
         self.imgs_buffer = []
         self.executor = futures.ThreadPoolExecutor(max_workers=1)
         
@@ -94,49 +94,58 @@ class camera_task:
 
 
     def save_video(self):
-        if self.DevInfo.GetSn()=="044011420148":   #041182220233  044062320120
-            camera = "RGB_1"
-        elif self.DevInfo.GetSn()=="044030620196":  #044062320105   042092320674
-            camera = "RGB_2"
-        elif self.DevInfo.GetSn()=="044062320120":
-            camera = "RGB_3"
-        elif self.DevInfo.GetSn()=="044062320129":
-            camera ="RGB_4"
-        elif self.DevInfo.GetSn()=="044030620195":
-            camera ="RGB_5"
-        elif self.DevInfo.GetSn()=="043051920299":
-            camera="inf"
-        elif self.DevInfo.GetSn()=="044062320137":
-            camera ="RGB_6"
-        elif self.DevInfo.GetSn()=="044062320105":
-            camera="RGB_7"
-        elif self.DevInfo.GetSn()=="042101120056":
-            camera="RGB_8"
+        """保存视频，带错误处理"""
+        camera = ""
+        try:
+            if self.DevInfo.GetSn() == "044011420148":   # 041182220233  044062320120
+                camera = "RGB_1"
+            elif self.DevInfo.GetSn() == "044030620196":  # 044062320105   042092320674
+                camera = "RGB_2"
+            elif self.DevInfo.GetSn() == "044062320120":
+                camera = "RGB_3"
+            elif self.DevInfo.GetSn() == "044062320129":
+                camera = "RGB_4"
+            elif self.DevInfo.GetSn() == "044030620195":
+                camera = "RGB_5"
+            elif self.DevInfo.GetSn() == "043051920299":
+                camera = "inf"
+            elif self.DevInfo.GetSn() == "044062320137":
+                camera = "RGB_6"
+            elif self.DevInfo.GetSn() == "044062320105":
+                camera = "RGB_7"
+            elif self.DevInfo.GetSn() == "042101120056":
+                camera = "RGB_8"
 
+            path = self.NS.save_id_path
+            sample_camera_path = os.path.join(path, camera)
+            
+            try:
+                if not os.path.exists(sample_camera_path):
+                    os.makedirs(sample_camera_path)
+            except OSError as e:
+                self.logger.error(f"创建保存目录失败: {str(e)}")
+                return
+            
+            self.logger.info(f"{camera} 开始保存视频，共 {len(self.imgs_buffer)} 帧")
 
-        path=self.NS.save_id_path
-        sample_camera_path = os.path.join(path, camera)
-        if not os.path.exists(sample_camera_path):
-            os.mkdir(sample_camera_path)
-        
-        self.logger.info(f"{camera} 开始保存视频，共 {len(self.imgs_buffer)} 帧")
+            saved_count = 0
+            for index, img in enumerate(self.imgs_buffer):
+                try:
+                    img_path = os.path.join(sample_camera_path, '%03d.jpg' % (index + 1))
+                    cv2.imwrite(img_path, img)
+                    saved_count += 1
+                    if index >= 240:
+                        break
+                except Exception as e:
+                    self.logger.error(f"保存第 {index+1} 帧时出错: {str(e)}")
 
-        for index, img in enumerate(self.imgs_buffer):
-            img_path = os.path.join(sample_camera_path, '%03d.jpg' % (index + 1))
-            # cv2.imshow("{}".format(camera), img)
-            # cv2.waitKey(1)
-            cv2.imwrite(img_path, img)
-            if index > 240 :
-                break
-
-
-        self.imgs_buffer = []
-        # if self.DevInfo.GetSn() == "044011420148":
-        #     # self.NS.ZED_saved = True
-
-        self.logger.info(f'{camera} 采集完成，已保存到 {sample_camera_path}')
-        #print('{}采集完成'.format(camera))
-        # time.sleep(0.1)
+            self.logger.info(f'{camera} 采集完成，已保存 {saved_count} 帧到 {sample_camera_path}')
+            
+        except Exception as e:
+            self.logger.error(f"save_video方法出错: {str(e)}")
+        finally:
+            # 无论如何都清空缓存
+            self.imgs_buffer = []
 
     def setCrop(self):
         if self.DevInfo.GetSn()=="044011420148":   #041182220233  044062320120
@@ -159,115 +168,165 @@ class camera_task:
             setROI(self.hCamera, 1024, 1024, 0, 0)
 
 
-    def run(self,pipe,stop_event):
+    def run(self, pipe, stop_event):
+        """相机运行主循环，带完整错误处理"""
         self.logger.info(f"相机 {self.DevInfo.GetSn()} 开始运行")
         num_frames = 0
         start_time = time.time()
-        while not stop_event.is_set():
-            try:
-
-                pRawData, FrameHead = mvsdk.CameraGetImageBuffer(self.hCamera, 200)
-                mvsdk.CameraImageProcess(self.hCamera, pRawData, self.pFrameBuffer, FrameHead)
-                mvsdk.CameraReleaseImageBuffer(self.hCamera, pRawData)
-                # 计算帧率
-                num_frames += 1
-                elapsed_time = time.time() - start_time
-                if elapsed_time > 0:
-                    fps = num_frames / elapsed_time
-                else:
-                    fps = 0
-                if num_frames>300:
-                    num_frames=0
-                    start_time=time.time()
-                    self.logger.debug(f"相机 {self.DevInfo.GetSn()} 当前帧率: {fps:.2f}")
-                # print("fps:",fps)
-                # print(self.NS)
-                # print(self.record_save)
-                # 此时图片已经存储在pFrameBuffer中，对于彩色相机pFrameBuffer=RGB数据，黑白相机pFrameBuffer=8位灰度数据
-                # 把pFrameBuffer转换成opencv的图像格式以进行后续算法处理
-                frame_data = (mvsdk.c_ubyte * FrameHead.uBytes).from_address(self.pFrameBuffer)
-                frame = np.frombuffer(frame_data, dtype=np.uint8)
-                frame = frame.reshape((FrameHead.iHeight, FrameHead.iWidth, 1 if FrameHead.uiMediaType == mvsdk.CAMERA_MEDIA_TYPE_MONO8 else 3) )
-
-                if self.DevInfo.GetSn() == "044011420148":
-                    frame=cv2.flip(frame,0)
-
-                elif self.DevInfo.GetSn() == "044030620196":  # 044062320105   042092320674
-                    frame=cv2.flip(frame,1)
-                    # pass
-                elif self.DevInfo.GetSn() == "044062320120":
-                    frame=cv2.flip(frame,0)
-                    # pass
-                elif self.DevInfo.GetSn() == "044062320129":
-                    # pass
-                    frame=cv2.rotate(frame,cv2.ROTATE_90_COUNTERCLOCKWISE)
-                    frame=cv2.flip(frame,1)
-                elif self.DevInfo.GetSn() == "044030620195":
-                    frame=cv2.rotate(frame,cv2.ROTATE_90_CLOCKWISE)
-                    frame=cv2.flip(frame,1)
-                    # pas
-                elif self.DevInfo.GetSn() == "044062320137":
-                    frame=cv2.rotate(frame,cv2.ROTATE_90_CLOCKWISE)
-                    frame=cv2.flip(frame,1)
-                elif self.DevInfo.GetSn() == "044062320105":
-                    frame=cv2.rotate(frame,cv2.ROTATE_90_COUNTERCLOCKWISE)
-                    frame=cv2.flip(frame,1)
-                    # pass
-                elif self.DevInfo.GetSn() == "044030620196":
-                    pass
-                elif self.DevInfo.GetSn() == "043051920299":
-                    frame = cv2.rotate(frame, cv2.ROTATE_180)
-                    frame=cv2.flip(frame,1)
-                elif self.DevInfo.GetSn() == "042101120056":
-                    frame = cv2.rotate(frame, cv2.ROTATE_180)
-                    frame=cv2.flip(frame,1)
-                    # pass
-                # frame = cv2.resize(frame, (640,480), interpolation = cv2.INTER_LINEAR)
-                if num_frames % 10 == 0:
-                    frame_show = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                    frame_show = cv2.resize(frame_show, (160,160))
-                    pipe.send(frame_show)
-                    self.frameRates[self.DevInfo.GetSn()] = fps
-
-                if self.record_save.is_set():#self.record_save[self.DevInfo.GetSn()]==1:
-                    self.imgs_buffer.append(frame)
-                    # 记录采集进度
-                    if self.DevInfo.GetSn() == "044011420148":
-                        self.NS.sampled = len(self.imgs_buffer)/self.NS.sample_frame
-                    if len(self.imgs_buffer) == 1:
-                        start_time2 = time.time()
-                        self.logger.info(f"相机 {self.DevInfo.GetSn()} 开始记录数据")
-                    # print(len(self.imgs_buffer))
-                    if len(self.imgs_buffer) == self.NS.sample_frame:
-                        self.record_save.clear()  # self.record_save[self.DevInfo.GetSn()]==0
-                        end_time2 = time.time()
-                        # print("采集完成，耗时：",end_time2-start_time2)
-                        self.logger.info(f"相机 {self.DevInfo.GetSn()} 采集完成，耗时: {end_time2-start_time2:.2f}秒")
-                        self.executor.submit(self.save_video)
-
-
-
-            except mvsdk.CameraException as e:
-                if e.error_code != mvsdk.CAMERA_STATUS_TIME_OUT:
-                    self.logger.error(f"CameraGetImageBuffer失败({e.error_code}): {e.message}")
-                    print("CameraGetImageBuffer failed({}): {}".format(e.error_code, e.message))
-
-
-        mvsdk.CameraStopRecord(self.hCamera)
-        # 关闭相机
-        mvsdk.CameraUnInit(self.hCamera)
-        # 释放帧缓存
-        mvsdk.CameraAlignFree(self.pFrameBuffer)
-        self.logger.info(f"相机 {self.DevInfo.GetSn()} 已停止")
-        #print("Camera stopped")
+        pRawData = None
         
-# def run_camera(index,pipe,stop_event):
-#     camera = camera_task(index)
-#     camera.run(pipe,stop_event)
+        try:
+            while not stop_event.is_set():
+                try:
+                    # 获取图像缓冲区
+                    try:
+                        pRawData, FrameHead = mvsdk.CameraGetImageBuffer(self.hCamera, 200)
+                    except mvsdk.CameraException as e:
+                        if e.error_code != mvsdk.CAMERA_STATUS_TIME_OUT:
+                            self.logger.error(f"CameraGetImageBuffer失败({e.error_code}): {e.message}")
+                        continue
+                    
+                    try:
+                        # 处理图像
+                        mvsdk.CameraImageProcess(self.hCamera, pRawData, self.pFrameBuffer, FrameHead)
+                    except Exception as e:
+                        self.logger.error(f"图像处理失败: {str(e)}")
+                        continue
+                    finally:
+                        # 无论如何都要释放图像缓冲区
+                        if pRawData:
+                            try:
+                                mvsdk.CameraReleaseImageBuffer(self.hCamera, pRawData)
+                                pRawData = None
+                            except Exception as e:
+                                self.logger.warning(f"释放图像缓冲区失败: {str(e)}")
+                    
+                    # 计算帧率
+                    num_frames += 1
+                    elapsed_time = time.time() - start_time
+                    fps = num_frames / elapsed_time if elapsed_time > 0 else 0
+                    
+                    if num_frames > 300:
+                        num_frames = 0
+                        start_time = time.time()
+                        self.logger.debug(f"相机 {self.DevInfo.GetSn()} 当前帧率: {fps:.2f}")
+                    
+                    # 转换图像格式
+                    try:
+                        frame_data = (mvsdk.c_ubyte * FrameHead.uBytes).from_address(self.pFrameBuffer)
+                        frame = np.frombuffer(frame_data, dtype=np.uint8)
+                        frame = frame.reshape((FrameHead.iHeight, FrameHead.iWidth, 
+                                             1 if FrameHead.uiMediaType == mvsdk.CAMERA_MEDIA_TYPE_MONO8 else 3))
+                    except Exception as e:
+                        self.logger.error(f"图像格式转换失败: {str(e)}")
+                        continue
+                    
+                    # 根据相机序列号进行图像变换
+                    try:
+                        frame = self._transform_frame(frame)
+                    except Exception as e:
+                        self.logger.warning(f"图像变换失败: {str(e)}")
+                    
+                    # 发送显示帧
+                    if num_frames % 10 == 0:
+                        try:
+                            frame_show = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                            frame_show = cv2.resize(frame_show, (160, 160))
+                            if pipe and not pipe.closed:
+                                pipe.send(frame_show)
+                            self.frameRates[self.DevInfo.GetSn()] = fps
+                        except Exception as e:
+                            self.logger.warning(f"发送显示帧失败: {str(e)}")
+                    
+                    # 记录数据
+                    if self.record_save.is_set():
+                        try:
+                            self.imgs_buffer.append(frame)
+                            
+                            # 记录采集进度
+                            if self.DevInfo.GetSn() == "044011420148":
+                                self.NS.sampled = len(self.imgs_buffer) / self.NS.sample_frame
+                            
+                            if len(self.imgs_buffer) == 1:
+                                start_time2 = time.time()
+                                self.logger.info(f"相机 {self.DevInfo.GetSn()} 开始记录数据")
+                            
+                            if len(self.imgs_buffer) >= self.NS.sample_frame:
+                                self.record_save.clear()
+                                end_time2 = time.time()
+                                self.logger.info(f"相机 {self.DevInfo.GetSn()} 采集完成，耗时: {end_time2-start_time2:.2f}秒")
+                                
+                                # 提交保存任务
+                                try:
+                                    if self.executor:
+                                        self.executor.submit(self.save_video)
+                                except Exception as e:
+                                    self.logger.error(f"提交保存任务失败: {str(e)}")
+                        except Exception as e:
+                            self.logger.error(f"记录数据时出错: {str(e)}")
+
+                except Exception as e:
+                    self.logger.error(f"处理帧时出错: {str(e)}")
+                    # 继续运行，不中断循环
+                    
+        except Exception as e:
+            self.logger.critical(f"相机运行主循环出现严重错误: {str(e)}")
+        finally:
+            # 确保资源被正确清理
+            self.logger.info(f"相机 {self.DevInfo.GetSn()} 开始清理资源...")
+            self.cleanup()
+            self.logger.info(f"相机 {self.DevInfo.GetSn()} 已停止")
+
+    def _transform_frame(self, frame):
+        """根据相机序列号变换图像"""
+        sn = self.DevInfo.GetSn()
+        
+        if sn == "044011420148":
+            frame = cv2.flip(frame, 0)
+        elif sn == "044030620196":
+            frame = cv2.flip(frame, 1)
+        elif sn == "044062320120":
+            frame = cv2.flip(frame, 0)
+        elif sn == "044062320129":
+            frame = cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
+            frame = cv2.flip(frame, 1)
+        elif sn == "044030620195":
+            frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
+            frame = cv2.flip(frame, 1)
+        elif sn == "044062320137":
+            frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
+            frame = cv2.flip(frame, 1)
+        elif sn == "044062320105":
+            frame = cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
+            frame = cv2.flip(frame, 1)
+        elif sn == "043051920299":
+            frame = cv2.rotate(frame, cv2.ROTATE_180)
+            frame = cv2.flip(frame, 1)
+        elif sn == "042101120056":
+            frame = cv2.rotate(frame, cv2.ROTATE_180)
+            frame = cv2.flip(frame, 1)
+            
+        return frame
+        
+def run_camera(devinfo, pipe, stop_event, NS, record_save, frameRates, ROI):
+    """运行相机的进程入口函数，带错误处理"""
+    camera = None
+    logger = setup_logger(f"run_camera_{devinfo.GetSn()}")
     
-def run_camera(devinfo,pipe,stop_event,NS,record_save,frameRates,ROI):
-    camera = camera_task(devinfo,NS,record_save,frameRates,ROI)
-    camera.run(pipe,stop_event) 
+    try:
+        logger.info(f"启动相机进程: {devinfo.GetSn()}")
+        camera = camera_task(devinfo, NS, record_save, frameRates, ROI)
+        camera.run(pipe, stop_event)
+    except Exception as e:
+        logger.critical(f"相机进程 {devinfo.GetSn()} 发生严重错误: {str(e)}")
+        # 确保清理资源
+        if camera:
+            try:
+                camera.cleanup()
+            except:
+                pass
+    finally:
+        logger.info(f"相机进程 {devinfo.GetSn()} 退出")
     
     
 if __name__ == "__main__":

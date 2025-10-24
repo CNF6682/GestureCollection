@@ -29,8 +29,9 @@ from utils.camera_proc import *
 from utils.camera_proc_realsence import runRealsence
 from utils.camera_proc_event import runEventCamera
 from utils.camera_ZED import runZED
-
+#切换音频版本
 from utils.audio_proc import run_audio
+from utils.audio_proc_lyx import run_audio as run_audio_lyx
 
 from multiprocessing import Pipe,Event,Process,Manager
 
@@ -172,6 +173,11 @@ class Main_Window(QtWidgets.QMainWindow):
         self.logger.info(f"发现 {nDev} 个迈德威视设备")
         #print("Found %d 迈德 devices." % nDev)
         for i, DevInfo in enumerate(self.DevList):
+            parent_conn = None
+            child_conn = None
+            stop_event = None
+            record_event = None
+            process = None
             try:
                 parent_conn, child_conn = Pipe()#设置管道
                 stop_event = Event()#设置停止
@@ -242,7 +248,41 @@ class Main_Window(QtWidgets.QMainWindow):
             except mvsdk.CameraException as e:
                 self.logger.error(f"相机 {i} 初始化失败({e.error_code}): {e.message}")
                 #print("Camera {} Init Failed({}): {}".format(i,e.error_code, e.message))
+                # 清理资源
+                if process and process.is_alive():
+                    if stop_event:
+                        stop_event.set()
+                    process.terminate()
+                    process.join(timeout=1.0)
+                if parent_conn:
+                    try:
+                        parent_conn.close()
+                    except:
+                        pass
+                if child_conn:
+                    try:
+                        child_conn.close()
+                    except:
+                        pass
                 return
+            except Exception as e:
+                self.logger.error(f"相机 {i} 初始化时发生未知错误: {str(e)}")
+                # 清理资源
+                if process and process.is_alive():
+                    if stop_event:
+                        stop_event.set()
+                    process.terminate()
+                    process.join(timeout=1.0)
+                if parent_conn:
+                    try:
+                        parent_conn.close()
+                    except:
+                        pass
+                if child_conn:
+                    try:
+                        child_conn.close()
+                    except:
+                        pass
 
 
         # #realsence相机########################################################################################
@@ -321,6 +361,19 @@ class Main_Window(QtWidgets.QMainWindow):
             # print("Exception", e)
             self.logger.warning(f"事件相机初始化失败: {str(e)}")
             #print("Process event failed")
+        finally:
+            # 如果初始化失败且相机未成功添加到列表，确保清理资源
+            if 'cameras' in locals() and (len(cameras) == 0 or ('process' in locals() and process and not process.is_alive())):
+                if 'parent_conn' in locals() and parent_conn:
+                    try:
+                        parent_conn.close()
+                    except:
+                        pass
+                if 'child_conn' in locals() and child_conn:
+                    try:
+                        child_conn.close()
+                    except:
+                        pass
 
         # #ZED相机########################################################################################
         try:
@@ -356,6 +409,29 @@ class Main_Window(QtWidgets.QMainWindow):
             # print("Exception", e)
             self.logger.warning(f"ZED相机初始化失败: {str(e)}")
             #print("Process ZED failed")
+        finally:
+            # 如果初始化失败，确保清理资源
+            if 'process' in locals() and process and not process.is_alive():
+                if 'parent_conn' in locals() and parent_conn:
+                    try:
+                        parent_conn.close()
+                    except:
+                        pass
+                if 'child_conn' in locals() and child_conn:
+                    try:
+                        child_conn.close()
+                    except:
+                        pass
+                if 'parent_conn_2' in locals() and parent_conn_2:
+                    try:
+                        parent_conn_2.close()
+                    except:
+                        pass
+                if 'child_conn_2' in locals() and child_conn_2:
+                    try:
+                        child_conn_2.close()
+                    except:
+                        pass
 
         #音频#################################################################################################
         self.NS_audio = Manager().Namespace()
@@ -466,61 +542,65 @@ class Main_Window(QtWidgets.QMainWindow):
 
 
     def update_frames(self):
-        self.fakeTime+=1
-        #从管道里面读取数据，初始化的时候管道和show_label是一一对应的
-        # try:
-        for i, parent_conn in enumerate(self.parent_conns):
-            # print("i:", i)
-            # print("parent_conn:", parent_conn.poll())
-            if parent_conn.poll():
-                # print("i:", i)
+        """更新显示帧，带错误处理"""
+        self.fakeTime += 1
+        # 从管道里面读取数据，初始化的时候管道和show_label是一一对应的
+        try:
+            for i, parent_conn in enumerate(self.parent_conns):
+                try:
+                    if parent_conn and parent_conn.poll():
+                        frame = parent_conn.recv()
+                        
+                        # 显示图像
+                        if i < len(self.show_windows):
+                            try:
+                                frame = cv2.resize(frame, (self.show_windows[i].width(), self.show_windows[i].height()))
+                                frame = QImage(frame, self.show_windows[i].width(), self.show_windows[i].height(), 
+                                             self.show_windows[i].width()*3, QImage.Format_RGB888)
+                                img = QPixmap.fromImage(frame)
+                                self.show_windows[i].setPixmap(img)
+                            except Exception as e:
+                                self.logger.warning(f"显示第{i}个窗口帧时出错: {str(e)}")
+                        
+                        # 更新帧率
+                        if i < len(self.DevList):
+                            try:
+                                self.frameRates_label[i].setText("帧率：{:.2f}".format(self.frameRates[self.DevList[i].GetSn()]))
+                            except Exception as e:
+                                self.logger.warning(f"更新第{i}个相机帧率时出错: {str(e)}")
+                        elif i < len(self.frameRates_label):
+                            try:
+                                self.frameRates_label[i].setText("帧率：{:.2f}".format(self.frameRates["ZED"]))
+                            except Exception as e:
+                                self.logger.warning(f"更新ZED帧率时出错: {str(e)}")
+                except EOFError:
+                    self.logger.warning(f"管道 {i} 已关闭")
+                except Exception as e:
+                    self.logger.warning(f"处理第{i}个管道时出错: {str(e)}")
 
-                frame = parent_conn.recv()
-                # print("frame:", frame.shape)
-                if i < len(self.show_windows):
-                    frame = cv2.resize(frame, (self.show_windows[i].width(), self.show_windows[i].height()))
+            # 更新进度条
+            try:
+                if int(self.NS.sampled*100) % 10 == 0 and int(self.NS.sampled*100) != 0:
+                    self.ui.progressBar.setValue(int(self.NS.sampled*100))
+                    if int(self.NS.sampled*100) == 100:
+                        self.NS.sampled = 0
+                        self.NS_audio.audio_stop = True
+            except Exception as e:
+                self.logger.warning(f"更新进度条时出错: {str(e)}")
 
-                    frame = QImage(frame, self.show_windows[i].width(),self.show_windows[i].height(),self.show_windows[i].width()*3, QImage.Format_RGB888)
-                    img = QPixmap.fromImage(frame)
-                    # if self.show_windows[i].width()>300:
-                    #     print("show_windows[i].width():", self.show_windows[i].width())
-                    self.show_windows[i].setPixmap(img)
-                if i <len(self.DevList):
-                    # print("帧率：{:.2f}".format(self.frameRates[self.DevList[i].GetSn()]))
-                    self.frameRates_label[i].setText("帧率：{:.2f}".format(self.frameRates[self.DevList[i].GetSn()]))
-                elif i<len(self.frameRates_label):
-                    self.frameRates_label[i].setText("帧率：{:.2f}".format(self.frameRates["ZED"])) # 没理清楚pipe数量和label数量
-                    pass
-
-
-        # if self.fakeTime%500==0:
-            # for i, DevInfo in enumerate(self.DevList):
-            #     if self.record_save[DevInfo.GetSn()] == 0: # 不在记录
-            #         self.ui.pushButton_regist.setEnabled(True)  # 启用注册按钮
-            # else:
-                # self.ui.pushButton_regist.setEnabled(False)  # 禁用注册按钮
-        # print(self.fakeTime)
-        if int(self.NS.sampled*100)%10==0 and int(self.NS.sampled*100)!=0 :
-            # print("sampled:", int(self.NS.sampled*100))
-            self.ui.progressBar.setValue(int(self.NS.sampled*100))
-            if int(self.NS.sampled*100)==100:
-                self.NS.sampled=0
-                self.NS_audio.audio_stop=True
-
-
-        if self.NS.ZED_saved== True:
-            # QMessageBox.warning(self, "Warning", "本次采集完成")
-            self.NS_audio.audio_saved=True
-            self.ui.textBrowser_log.append("本次采集完成")
-            self.NS.ZED_saved=False
-            self.analyze()
-            self.sample_update(1)
-
-
-        # except Exception as e:
-        #     print("Exception:", e)
-        #     print("update_frames failed")
-        #     pass
+            # 检查ZED保存状态
+            try:
+                if self.NS.ZED_saved == True:
+                    self.NS_audio.audio_saved = True
+                    self.ui.textBrowser_log.append("本次采集完成")
+                    self.NS.ZED_saved = False
+                    self.analyze()
+                    self.sample_update(1)
+            except Exception as e:
+                self.logger.error(f"处理ZED保存状态时出错: {str(e)}")
+                
+        except Exception as e:
+            self.logger.error(f"update_frames发生错误: {str(e)}")
 
     #
     # def sync_client(self, host_b, port=65431, id_dir="1_0_999_0_0", num_frames=0):
@@ -541,26 +621,37 @@ class Main_Window(QtWidgets.QMainWindow):
 
 
     def analyze(self):
-        self.ui.textBrowser_log.clear()
-        self.ui.textBrowser_log.append("以下为统计信息：")
-        img_path = self.fpath + '/img'
-        sample=self.session + "_" +  self.ID+ "_" + self.lr + "_" + self.gesture_type + "_" + self.sample_time
-        # HOST_B = "192.168.1.119"  # B电脑的IP地址
+        """分析采集数据，带错误处理"""
+        try:
+            self.ui.textBrowser_log.clear()
+            self.ui.textBrowser_log.append("以下为统计信息：")
+            
+            img_path = self.fpath + '/img'
+            sample = self.session + "_" + self.ID + "_" + self.lr + "_" + self.gesture_type + "_" + self.sample_time
+            
+            self.ui.textBrowser_log.append(sample)
+            self.save_id_path = img_path + '/' + sample
 
-        # print("开始发送目录")
-        # self.sync_client(host_b=HOST_B, id_dir=sample)
-        # print("发送完毕")
-
-        self.ui.textBrowser_log.append(sample)
-        self.save_id_path = img_path + '/' + sample
-
-        if os.path.exists(self.save_id_path):
-            # 统计id下对数据数量
-            modalities = os.listdir(self.save_id_path)
-            for modality in modalities:
-                modality_path = self.save_id_path + "/" + modality
-                imgs=os.listdir(modality_path)
-                self.ui.textBrowser_log.append(modality+" : "+str(len(imgs)))
+            if os.path.exists(self.save_id_path):
+                try:
+                    # 统计id下对数据数量
+                    modalities = os.listdir(self.save_id_path)
+                    for modality in modalities:
+                        try:
+                            modality_path = self.save_id_path + "/" + modality
+                            if os.path.isdir(modality_path):
+                                imgs = os.listdir(modality_path)
+                                self.ui.textBrowser_log.append(modality + " : " + str(len(imgs)))
+                        except Exception as e:
+                            self.logger.warning(f"分析模态 {modality} 时出错: {str(e)}")
+                except Exception as e:
+                    self.logger.error(f"读取样本目录时出错: {str(e)}")
+            else:
+                self.logger.warning(f"样本路径不存在: {self.save_id_path}")
+                
+        except Exception as e:
+            self.logger.error(f"analyze方法发生错误: {str(e)}")
+            self.ui.textBrowser_log.append(f"分析时出错: {str(e)}")
 
     # 定义排序的键函数
     def sort_key(self,sample_name):
@@ -831,49 +922,76 @@ class Main_Window(QtWidgets.QMainWindow):
     #     label.setPixmap(img)
 
     def closeEvent(self, event):
-        self.logger.info("开始关闭应用程序...")
-        self.timer_imshow.stop()
-        self.timer_record.stop()
-        self.timer_continue.stop()
-        # print("close")
-        for stop_event in self.stop_events:
-            if stop_event is not None:#<-- new
-                stop_event.set()
-        self.logger.info("已发送停止信号到所有进程")
-        time.sleep(0.5)
-        #关闭管道，防止卡死
-        for parent_conns in self.parent_conns:
-            if parent_conns is not None:
-                try:
-                    parent_conns.close()
-                except:
-                    pass
-        # time.sleep(5)
-        # print("close")
-
-        # for process in self.processes:
-        #     process.join()
-        #     print("close")
-        # 尝试优雅地终止进程，但设置超时
-        for i, process in enumerate(self.processes):
-            if process is not None and process.is_alive():
-                try:
-                    process.join(timeout=1.0)
-                    if process.is_alive():
-                        self.logger.warning(f"强制终止进程 {i}")
-                        self.ui.textBrowser_log.append(f"强制终止进程 {i}")
-                        process.terminate()
-                except:
-                    pass
-        # 最后再检查是否有任何进程仍然活着
-        time.sleep(0.5)
-        for process in self.processes:
-            if process is not None and process.is_alive():
-                process.kill()  # 最后的手段
-        
-        self.logger.info("所有进程已终止，应用程序关闭")
-        event.accept()
-        # print("close")
+        try:
+            self.logger.info("开始关闭应用程序...")
+            # 停止所有定时器
+            try:
+                self.timer_imshow.stop()
+                self.timer_record.stop()
+                self.timer_continue.stop()
+            except Exception as e:
+                self.logger.error(f"停止定时器时出错: {str(e)}")
+            
+            # 发送停止信号到所有进程
+            try:
+                for stop_event in self.stop_events:
+                    if stop_event is not None:
+                        stop_event.set()
+                self.logger.info("已发送停止信号到所有进程")
+            except Exception as e:
+                self.logger.error(f"发送停止信号时出错: {str(e)}")
+            
+            time.sleep(0.5)
+            
+            # 关闭所有管道
+            try:
+                for parent_conns in self.parent_conns:
+                    if parent_conns is not None:
+                        try:
+                            parent_conns.close()
+                        except Exception as e:
+                            self.logger.warning(f"关闭管道时出错: {str(e)}")
+            except Exception as e:
+                self.logger.error(f"关闭管道过程出错: {str(e)}")
+            
+            # 尝试优雅地终止进程，但设置超时
+            try:
+                for i, process in enumerate(self.processes):
+                    if process is not None and process.is_alive():
+                        try:
+                            process.join(timeout=1.0)
+                            if process.is_alive():
+                                self.logger.warning(f"强制终止进程 {i}")
+                                try:
+                                    self.ui.textBrowser_log.append(f"强制终止进程 {i}")
+                                except:
+                                    pass
+                                process.terminate()
+                        except Exception as e:
+                            self.logger.warning(f"终止进程 {i} 时出错: {str(e)}")
+            except Exception as e:
+                self.logger.error(f"终止进程过程出错: {str(e)}")
+            
+            # 最后再检查是否有任何进程仍然活着
+            time.sleep(0.5)
+            try:
+                for i, process in enumerate(self.processes):
+                    if process is not None and process.is_alive():
+                        try:
+                            process.kill()  # 最后的手段
+                            self.logger.warning(f"强制杀死进程 {i}")
+                        except Exception as e:
+                            self.logger.error(f"杀死进程 {i} 时出错: {str(e)}")
+            except Exception as e:
+                self.logger.error(f"清理残留进程时出错: {str(e)}")
+            
+            self.logger.info("所有进程已终止，应用程序关闭")
+            
+        except Exception as e:
+            self.logger.critical(f"关闭应用程序时发生严重错误: {str(e)}")
+        finally:
+            # 无论如何都要接受关闭事件
+            event.accept()
 
 
 
