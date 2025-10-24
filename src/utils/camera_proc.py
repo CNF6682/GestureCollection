@@ -9,6 +9,7 @@ import concurrent.futures as futures
 import os
 
 import utils.mvsdk as mvsdk
+from utils.logger import setup_logger
 
 def setROI(hCamera,iWidth,iHeight,iHOffsetFOV,iVOffsetFOV):
     sRoiReslution = mvsdk.tSdkImageResolution()  # 实例化变量
@@ -31,12 +32,19 @@ class camera_task:
         #缓存
         self.imgs_buffer = []
         self.executor = futures.ThreadPoolExecutor(max_workers=1)
+        
+        # 初始化日志
+        camera_name = f"Camera_{DevInfo.GetSn()}"
+        self.logger = setup_logger(camera_name)
+        self.logger.info(f"初始化相机: {DevInfo.GetSn()}")
 
         # 打开相机
         self.hCamera = 0
         try:
             self.hCamera = mvsdk.CameraInit(DevInfo, -1, -1)
+            self.logger.info(f"相机初始化成功: {DevInfo.GetSn()}")
         except mvsdk.CameraException as e:
+            self.logger.error(f"相机初始化失败({e.error_code}): {e.message}")
             print("CameraInit Failed({}): {}".format(e.error_code, e.message) )
             return
         
@@ -110,6 +118,8 @@ class camera_task:
         sample_camera_path = os.path.join(path, camera)
         if not os.path.exists(sample_camera_path):
             os.mkdir(sample_camera_path)
+        
+        self.logger.info(f"{camera} 开始保存视频，共 {len(self.imgs_buffer)} 帧")
 
         for index, img in enumerate(self.imgs_buffer):
             img_path = os.path.join(sample_camera_path, '%03d.jpg' % (index + 1))
@@ -124,7 +134,8 @@ class camera_task:
         # if self.DevInfo.GetSn() == "044011420148":
         #     # self.NS.ZED_saved = True
 
-        print('{}采集完成'.format(camera))
+        self.logger.info(f'{camera} 采集完成，已保存到 {sample_camera_path}')
+        #print('{}采集完成'.format(camera))
         # time.sleep(0.1)
 
     def setCrop(self):
@@ -149,6 +160,7 @@ class camera_task:
 
 
     def run(self,pipe,stop_event):
+        self.logger.info(f"相机 {self.DevInfo.GetSn()} 开始运行")
         num_frames = 0
         start_time = time.time()
         while not stop_event.is_set():
@@ -167,6 +179,7 @@ class camera_task:
                 if num_frames>300:
                     num_frames=0
                     start_time=time.time()
+                    self.logger.debug(f"相机 {self.DevInfo.GetSn()} 当前帧率: {fps:.2f}")
                 # print("fps:",fps)
                 # print(self.NS)
                 # print(self.record_save)
@@ -223,17 +236,20 @@ class camera_task:
                         self.NS.sampled = len(self.imgs_buffer)/self.NS.sample_frame
                     if len(self.imgs_buffer) == 1:
                         start_time2 = time.time()
+                        self.logger.info(f"相机 {self.DevInfo.GetSn()} 开始记录数据")
                     # print(len(self.imgs_buffer))
                     if len(self.imgs_buffer) == self.NS.sample_frame:
                         self.record_save.clear()  # self.record_save[self.DevInfo.GetSn()]==0
                         end_time2 = time.time()
                         # print("采集完成，耗时：",end_time2-start_time2)
+                        self.logger.info(f"相机 {self.DevInfo.GetSn()} 采集完成，耗时: {end_time2-start_time2:.2f}秒")
                         self.executor.submit(self.save_video)
 
 
 
             except mvsdk.CameraException as e:
                 if e.error_code != mvsdk.CAMERA_STATUS_TIME_OUT:
+                    self.logger.error(f"CameraGetImageBuffer失败({e.error_code}): {e.message}")
                     print("CameraGetImageBuffer failed({}): {}".format(e.error_code, e.message))
 
 
@@ -242,7 +258,8 @@ class camera_task:
         mvsdk.CameraUnInit(self.hCamera)
         # 释放帧缓存
         mvsdk.CameraAlignFree(self.pFrameBuffer)
-        print("Camera stopped")
+        self.logger.info(f"相机 {self.DevInfo.GetSn()} 已停止")
+        #print("Camera stopped")
         
 # def run_camera(index,pipe,stop_event):
 #     camera = camera_task(index)

@@ -55,6 +55,7 @@ import cv2
 import argparse
 import os
 import concurrent.futures as futures
+from utils.logger import setup_logger
 
 class EventCamera:
     def __init__(self,NS,record_save,frameRates,pipe,cache_duration_seconds=4.0):
@@ -65,6 +66,10 @@ class EventCamera:
         self.pipe = pipe
         self.cache_duration_seconds = cache_duration_seconds
         self.executor = futures.ThreadPoolExecutor(max_workers=1)
+        
+        # 初始化日志
+        self.logger = setup_logger('EventCamera')
+        self.logger.info("事件相机初始化开始")
 
 
         self.camera = dv.io.CameraCapture()
@@ -80,6 +85,8 @@ class EventCamera:
         self.start_time = time.time()
 
         self.num_frames_show = 0
+        
+        self.logger.info("事件相机初始化完成")
 
     def cameraCheck(self):
         # Check whether event stream is available
@@ -148,7 +155,8 @@ class EventCamera:
     #             self.writer.writeEvents(events, streamName='events')
     def save_event(self):
         # try:
-            print("Saving events...")
+            self.logger.info("开始保存事件数据...")
+            #print("Saving events...")
 
 
             path=self.NS.save_id_path
@@ -160,7 +168,8 @@ class EventCamera:
             self.writer = dv.io.MonoCameraWriter(sample_camera_path, self.camera)
             self.writer.writeEvents(self.event_store, streamName='events')
             # Clear the event_store
-            print("Events saved")
+            self.logger.info(f"事件数据保存完成，共 {self.event_store.size()} 个事件")
+            #print("Events saved")
             # print(self.event_store.size())
             # self.event_store.erase(0, self.event_store.size())
             # print(self.event_store.size())
@@ -176,6 +185,7 @@ class EventCamera:
 
 
     def run(self, stop_event):
+        self.logger.info("事件相机开始运行")
         self.start_time = time.time()
         num_events = 0
         while True:
@@ -195,13 +205,15 @@ class EventCamera:
                     #记录开始时间
                     if num_events == 1:
                         start_time = time.time()
+                        self.logger.info("事件相机开始记录数据")
                     self.event_store.add(events)
                     # print(len(self.event_store))
 
                     current_time = time.time()
                     # print(current_time - start_time)
                     if current_time - start_time >= self.cache_duration_seconds:
-                        print("Saving events to disk...")
+                        #self.logger.info("开始保存事件数据...")
+                        self.logger.info(f"事件相机采集完成，耗时: {current_time - start_time:.2f}秒")
                         self.record_save.clear()  # self.record_save["event"] = 0
                         self.executor.submit(self.save_event)
                         num_events = 0
@@ -209,7 +221,8 @@ class EventCamera:
             #     print("Failed to run event camera: ", e)
 
 
-        print("Event camera stopped")
+        self.logger.info("事件相机已停止")
+        #print("Event camera stopped")
 
 
 

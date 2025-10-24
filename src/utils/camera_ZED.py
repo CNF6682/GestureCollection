@@ -1,6 +1,4 @@
-
-
-
+# -*- coding: utf-8 -*-
 # 华南理工大学
 # 王熙来
 # 开发时间：2025/3/17 16:52
@@ -15,6 +13,7 @@ import os
 
 import pyzed.sl as sl
 import cv2
+from utils.logger import setup_logger
 
 class ZEDTask:
     def __init__(self,NS,record_save,frameRates):
@@ -24,6 +23,10 @@ class ZEDTask:
         self.frameRates = frameRates # frameRates dict
 
         self.executor = futures.ThreadPoolExecutor(max_workers=1) # 储存线程
+        
+        # 初始化日志
+        self.logger = setup_logger('ZEDCamera')
+        self.logger.info("ZED相机初始化开始")
 
         self.zed = sl.Camera()
 
@@ -46,10 +49,12 @@ class ZEDTask:
         # Open the camera
         returned_state = self.zed.open(init_parameters)
         if returned_state != sl.ERROR_CODE.SUCCESS:
-            print("Camera Open", returned_state, "Exit program.")
+            self.logger.error(f"ZED相机打开失败: {returned_state}")
+            #print("Camera Open", returned_state, "Exit program.")
             exit()
         else:
-            print("Camera Opened Successfully")
+            self.logger.info("ZED相机打开成功")
+            #print("Camera Opened Successfully")
 
         resolution = self.zed.get_camera_information().camera_configuration.resolution
 
@@ -62,6 +67,8 @@ class ZEDTask:
 
         self.recording = 0
         self.save = 0
+        
+        self.logger.info("ZED相机初始化完成")  
 
     def grab(self):
         try:
@@ -96,6 +103,8 @@ class ZEDTask:
             os.mkdir(sample_camera_path_1)
         if not os.path.exists(sample_camera_path_2):
             os.mkdir(sample_camera_path_2)
+        
+        self.logger.info(f"ZED相机开始保存数据，共 {len(self.RGB_buffer)} 帧")
 
         for index, img in enumerate(self.RGB_buffer):
             if index<120:
@@ -112,10 +121,12 @@ class ZEDTask:
         self.RGB_buffer = []
         self.Depth_buffer = []
 
-        print('zed采集完成')
+        self.logger.info(f'ZED相机采集完成，已保存到 {path}')
+        #print('zed采集完成')
         self.NS.ZED_saved = True
 
     def run(self,pipe,pipe2,stop_event):
+        self.logger.info("ZED相机开始运行")
         num=0
         self.RGB_buffer = []
         self.Depth_buffer = []
@@ -124,10 +135,11 @@ class ZEDTask:
         start_time = time.time()
 
         # 相机分辨率为：
-        print("Camera Resolution:",self.zed.get_camera_information().camera_configuration.resolution.width,
-              self.zed.get_camera_information().camera_configuration.resolution.height)
+        self.logger.info(f"ZED相机分辨率: {self.zed.get_camera_information().camera_configuration.resolution.width}x{self.zed.get_camera_information().camera_configuration.resolution.height}")
+        #print("Camera Resolution:",self.zed.get_camera_information().camera_configuration.resolution.width,
+        #      self.zed.get_camera_information().camera_configuration.resolution.height)
         # 相机帧率为：
-        print("Camera FPS:",self.zed.get_camera_information())
+        #print("Camera FPS:",self.zed.get_camera_information())
 
         while not stop_event.is_set():
             try:
@@ -157,6 +169,7 @@ class ZEDTask:
                     if num_frames>60:
                         num_frames=0
                         start_time=time.time()
+                        self.logger.debug(f"ZED相机当前帧率: {fps:.2f}")
 
                     # print("fps:",fps)
                     # print(num_frames)
@@ -201,10 +214,12 @@ class ZEDTask:
 
                         if len(self.RGB_buffer) == 1:
                             start_time2 = time.time()
+                            self.logger.info("ZED相机开始记录数据")
                         # print(len(self.imgs_buffer))
                         if len(self.RGB_buffer) == 120:
                             end_time2 = time.time()
-                            print("采集完成，耗时：",end_time2-start_time2)
+                            self.logger.info(f"ZED相机采集完成，耗时: {end_time2-start_time2:.2f}秒")
+                            #print("采集完成，耗时：",end_time2-start_time2)
                             self.executor.submit(self.save_video)
 
                             self.record_save.clear()  # self.record_save["ZED"] = 0
@@ -212,10 +227,12 @@ class ZEDTask:
                     end=time.time()
                     # print("time:",1/(end - start))
             except Exception as e:
-                print(e)
+                self.logger.error(f"ZED相机运行出错: {str(e)}")
+                #print(e)
 
 
-        print("ZED stop")
+        self.logger.info("ZED相机已停止")
+        #print("ZED stop")
         # # 停止管道数据传输
         # self.pipeline.stop()
         #

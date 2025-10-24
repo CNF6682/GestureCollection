@@ -13,6 +13,7 @@ sys.path.append("../../")
 
 import shutil
 import csv
+from utils.logger import setup_logger
 #界面
 from ui.UI import Ui_MAIN_WINDOW
 
@@ -42,6 +43,12 @@ import socket
 class Main_Window(QtWidgets.QMainWindow):
     def __init__(self):
         super(Main_Window, self).__init__()
+        
+        # 初始化日志
+        self.logger = setup_logger('MainWindow')
+        self.logger.info("="*60)
+        self.logger.info("主窗口初始化开始")
+        
         self.ui = Ui_MAIN_WINDOW()
         self.ui.setupUi(self)
         self.init_UI()
@@ -69,10 +76,12 @@ class Main_Window(QtWidgets.QMainWindow):
         self.NS.ZED_saved=False
 
 
-        print('采样帧数为{}'.format(self.NS.sample_frame))
+        self.logger.info(f'采样帧数设置为: {self.NS.sample_frame}')
+        #print('采样帧数为{}'.format(self.NS.sample_frame))
         #保存路径
         self.fpath = self.ui.lineEdit_sample_save_path.text()
-        print('保存路径为{}'.format(self.fpath))
+        self.logger.info(f'保存路径设置为: {self.fpath}')
+        #print('保存路径为{}'.format(self.fpath))
         #数据统计csv
         self.information_csv_path = os.path.join(self.fpath, 'user_info.csv')
         self.user_ids = []
@@ -158,14 +167,17 @@ class Main_Window(QtWidgets.QMainWindow):
         # self.camera_objs = GlobalContainer()
         nDev = len(self.DevList)
         if nDev < 1:
-            print("No camera was found!")
-        print("Found %d 迈德 devices." % nDev)
+            self.logger.warning("未发现迈德威视相机！")
+            #print("No camera was found!")
+        self.logger.info(f"发现 {nDev} 个迈德威视设备")
+        #print("Found %d 迈德 devices." % nDev)
         for i, DevInfo in enumerate(self.DevList):
             try:
                 parent_conn, child_conn = Pipe()#设置管道
                 stop_event = Event()#设置停止
                 record_event = Event() # <--- [添加] 为这个相机创建一个专属的Event
-                print("第{}个设备，编号{}".format(i, DevInfo.GetSn()))
+                self.logger.info(f"初始化第{i}个迈德相机，编号: {DevInfo.GetSn()}")
+                #print("第{}个设备，编号{}".format(i, DevInfo.GetSn()))
 
                 #记录每个设备的储存标志位 0显示 1缓存后保存
                 self.record_save[DevInfo.GetSn()] = 0
@@ -218,6 +230,7 @@ class Main_Window(QtWidgets.QMainWindow):
                 process = Process(target=run_camera, args=(DevInfo,child_conn,stop_event,self.NS,record_event,self.frameRates,self.ROI))
                 process.daemon = True  # <--- [添加] 设置为守护进程，确保主程序退出时子进程也退出
                 process.start()
+                self.logger.info(f"迈德相机进程启动成功: {DevInfo.GetSn()}")
                 self.parent_conns.append(parent_conn)
                 self.stop_events.append(stop_event)
                 self.record_events.append(record_event) # <--- [添加] 将Event存入列表
@@ -227,7 +240,8 @@ class Main_Window(QtWidgets.QMainWindow):
 
 
             except mvsdk.CameraException as e:
-                print("Camera {} Init Failed({}): {}".format(i,e.error_code, e.message))
+                self.logger.error(f"相机 {i} 初始化失败({e.error_code}): {e.message}")
+                #print("Camera {} Init Failed({}): {}".format(i,e.error_code, e.message))
                 return
 
 
@@ -279,11 +293,12 @@ class Main_Window(QtWidgets.QMainWindow):
         try:
             cameras = dv.io.discoverDevices()
             if len(cameras) > 0:
-                print("找到了事件相机设备。")
+                self.logger.info("发现事件相机设备")
+                #print("找到了事件相机设备。")
                 parent_conn, child_conn = Pipe()  # 设置管道
                 record_event = Event() # <--- [添加]
                 stop_event = Event()  # 设置停止event
-                print("事件相机")
+                #print("事件相机")
                 # 记录每个设备的储存标志位 0显示 1缓存后保存
                 self.record_save["event"] = 0
                 # 每个相机的帧率
@@ -292,6 +307,7 @@ class Main_Window(QtWidgets.QMainWindow):
                 process = Process(target=runEventCamera, args=(child_conn, stop_event, self.NS, record_event, self.frameRates))
                 process.daemon = True  # <--- [添加] 设置为守护进程，确保主程序退出时子进程也退出
                 process.start()
+                self.logger.info("事件相机进程启动成功")
 
                 self.show_windows.append(self.ui.label_event)
                 self.frameRates_label.append(self.ui.label_frameRates_event)
@@ -303,7 +319,8 @@ class Main_Window(QtWidgets.QMainWindow):
 
         except Exception as e:
             # print("Exception", e)
-            print("Process event failed")
+            self.logger.warning(f"事件相机初始化失败: {str(e)}")
+            #print("Process event failed")
 
         # #ZED相机########################################################################################
         try:
@@ -311,7 +328,8 @@ class Main_Window(QtWidgets.QMainWindow):
             parent_conn_2, child_conn_2 = Pipe()  # 设置管道
             record_event = Event() # <--- [添加]
             stop_event = Event()  # 设置停止event
-            print("ZED设备")
+            self.logger.info("初始化ZED设备")
+            #print("ZED设备")
             # 记录每个设备的储存标志位 0显示 1缓存后保存
             self.record_save["ZED"] = 0
             # 每个相机的帧率
@@ -320,6 +338,7 @@ class Main_Window(QtWidgets.QMainWindow):
             process = Process(target=runZED, args=(child_conn, child_conn_2, stop_event, self.NS, record_event, self.frameRates))
             process.daemon = True  # <--- [添加] 设置为守护进程，确保主程序退出时子进程也退出
             process.start()
+            self.logger.info("ZED相机进程启动成功")
 
             self.show_windows.append(self.ui.label_Stereo)
             self.show_windows.append(self.ui.label_Depth)
@@ -335,13 +354,15 @@ class Main_Window(QtWidgets.QMainWindow):
 
         except Exception as e:
             # print("Exception", e)
-            print("Process ZED failed")
+            self.logger.warning(f"ZED相机初始化失败: {str(e)}")
+            #print("Process ZED failed")
 
         #音频#################################################################################################
         self.NS_audio = Manager().Namespace()
         self.NS_audio.audio_start = False
         self.NS_audio.audio_stop = False
         self.NS_audio.audio_saved = False
+        self.logger.info("启动音频进程")
         process = Process(target=run_audio,
                           args=(self.NS_audio,))
         process.start()
@@ -349,6 +370,9 @@ class Main_Window(QtWidgets.QMainWindow):
 
 
         self.sample_update(0)
+        
+        self.logger.info("主窗口初始化完成")
+        self.logger.info("="*60)
 
 
 
@@ -382,7 +406,8 @@ class Main_Window(QtWidgets.QMainWindow):
     def sample_frame_changed(self):
         try:
             self.NS.sample_frame = int(self.ui.lineEdit_sample_frame.text())
-            print('将采样帧数改成了{}'.format(self.NS.sample_frame))
+            self.logger.info(f'采样帧数修改为: {self.NS.sample_frame}')
+            #print('将采样帧数改成了{}'.format(self.NS.sample_frame))
         except:
             return
 
@@ -682,6 +707,7 @@ class Main_Window(QtWidgets.QMainWindow):
     def regist(self):
         #检查信息是否完整
         if self.name=='' or self.sex=='' or self.age=='' or self.ID=='' or self.lr=='' or self.session=='' or self.gesture_type=='' or self.sample_time=='':
+            self.logger.warning("用户信息不完整，无法注册")
             QMessageBox.warning(self, "Warning", "当前用户信息不全，请重新填写")
             return
 
@@ -697,6 +723,7 @@ class Main_Window(QtWidgets.QMainWindow):
             if del_or_not == QMessageBox.No:
                 return
 
+        self.logger.info(f"开始注册采集任务: {self.save_id_path}")
         self.ui.pushButton_regist.setEnabled(False) #暂时禁用注册按键
 
         self.NS_audio.audio_start=True
@@ -721,7 +748,8 @@ class Main_Window(QtWidgets.QMainWindow):
         #等待播音结束，开始采集
         self.ui.pushButton_regist.setEnabled(False)
         self.timer_record.stop()
-
+        
+        self.logger.info("开始数据采集")
 
 
 
@@ -741,6 +769,7 @@ class Main_Window(QtWidgets.QMainWindow):
 
         # self.timer_fault.start(2000)
         # print("timer start")
+        self.logger.info("所有相机开始记录")
         self.add_id()
 
 
@@ -802,21 +831,23 @@ class Main_Window(QtWidgets.QMainWindow):
     #     label.setPixmap(img)
 
     def closeEvent(self, event):
+        self.logger.info("开始关闭应用程序...")
         self.timer_imshow.stop()
         self.timer_record.stop()
         self.timer_continue.stop()
         # print("close")
         for stop_event in self.stop_events:
             if stop_event is not None:#<-- new
-            stop_event.set()
+                stop_event.set()
+        self.logger.info("已发送停止信号到所有进程")
         time.sleep(0.5)
         #关闭管道，防止卡死
         for parent_conns in self.parent_conns:
             if parent_conns is not None:
-            try:
-                parent_conns.close()
-            except:
-                pass
+                try:
+                    parent_conns.close()
+                except:
+                    pass
         # time.sleep(5)
         # print("close")
 
@@ -829,6 +860,7 @@ class Main_Window(QtWidgets.QMainWindow):
                 try:
                     process.join(timeout=1.0)
                     if process.is_alive():
+                        self.logger.warning(f"强制终止进程 {i}")
                         self.ui.textBrowser_log.append(f"强制终止进程 {i}")
                         process.terminate()
                 except:
@@ -838,6 +870,8 @@ class Main_Window(QtWidgets.QMainWindow):
         for process in self.processes:
             if process is not None and process.is_alive():
                 process.kill()  # 最后的手段
+        
+        self.logger.info("所有进程已终止，应用程序关闭")
         event.accept()
         # print("close")
 
