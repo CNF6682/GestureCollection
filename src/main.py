@@ -84,7 +84,7 @@ class Main_Window(QtWidgets.QMainWindow):
 
         self.timer_imshow=QtCore.QTimer(self)
         self.timer_imshow.timeout.connect(self.update_frames)
-        self.timer_imshow.start(1)  # 每1ms检查一次新帧
+        self.timer_imshow.start(10)  # 每1ms检查一次新帧
         self.fakeTime=0 #理论系统时间
 
         self.timer_record=QtCore.QTimer(self)
