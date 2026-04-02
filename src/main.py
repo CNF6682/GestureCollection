@@ -65,11 +65,10 @@ class Main_Window(QtWidgets.QMainWindow):
         # 采样进度百分比
         self.NS.sampled= 0
 
-        # ZED保存标志
-        self.NS.ZED_saved=False
-
-        self.NS.RGB1_saved=False
-        self.NS.inf_saved=False
+        # 存盘完成状态板（替代原来3个散flag）
+        self.save_status = Manager().dict()  # {camera_id: bool}
+        self.cameras_to_save = []            # 本次实际启动的相机列表
+        self.NS.recording_in_progress = False
 
 
         print('采样帧数为{}'.format(self.NS.sample_frame))
@@ -217,7 +216,10 @@ class Main_Window(QtWidgets.QMainWindow):
                     self.frameRates_label.append(self.ui.label_frameRates_inf)
 
 
-                process = Process(target=run_camera, args=(DevInfo,child_conn,stop_event,self.NS,record_event,self.frameRates,self.ROI),name=f"{DevInfo.GetSn()}")
+                self.save_status[DevInfo.GetSn()] = False
+                self.cameras_to_save.append(DevInfo.GetSn())
+
+                process = Process(target=run_camera, args=(DevInfo,child_conn,stop_event,self.NS,record_event,self.frameRates,self.ROI,self.save_status),name=f"{DevInfo.GetSn()}")
                 process.daemon = True  # <--- [添加] 设置为守护进程，确保主程序退出时子进程也退出
                 process.start()
                 self.parent_conns.append(parent_conn)
@@ -291,7 +293,10 @@ class Main_Window(QtWidgets.QMainWindow):
                 # 每个相机的帧率
                 self.frameRates["event"] = 0
 
-                process = Process(target=runEventCamera, args=(child_conn, stop_event, self.NS, record_event, self.frameRates),name=f"event")
+                self.save_status["event"] = False
+                self.cameras_to_save.append("event")
+
+                process = Process(target=runEventCamera, args=(child_conn, stop_event, self.NS, record_event, self.frameRates, self.save_status),name=f"event")
                 process.daemon = True  # <--- [添加] 设置为守护进程，确保主程序退出时子进程也退出
                 process.start()
 
@@ -321,7 +326,10 @@ class Main_Window(QtWidgets.QMainWindow):
 
 
 
-            process = Process(target=runZED, args=(child_conn, child_conn_2, stop_event, self.NS, record_event, self.frameRates),name=f"ZED")
+            self.save_status["ZED"] = False
+            self.cameras_to_save.append("ZED")
+
+            process = Process(target=runZED, args=(child_conn, child_conn_2, stop_event, self.NS, record_event, self.frameRates, self.save_status),name=f"ZED")
             process.daemon = True  # <--- [添加] 设置为守护进程，确保主程序退出时子进程也退出
             process.start()
 
@@ -487,13 +495,12 @@ class Main_Window(QtWidgets.QMainWindow):
                 self.NS_audio.audio_stop=True
 
 
-        if self.NS.ZED_saved== True and self.NS.RGB1_saved == True and self.NS.inf_saved == True:
-            # QMessageBox.warning(self, "Warning", "本次采集完成")
+        if (self.NS.recording_in_progress
+                and self.cameras_to_save
+                and all(self.save_status.get(cam, False) for cam in self.cameras_to_save)):
+            self.NS.recording_in_progress = False
             self.NS_audio.audio_saved=True
             self.ui.textBrowser_log.append("本次采集完成")
-            self.NS.ZED_saved=False
-            self.NS.RGB1_saved=False
-            self.NS.inf_saved=False
             self.analyze()
             self.sample_update(1)
 
@@ -730,8 +737,10 @@ class Main_Window(QtWidgets.QMainWindow):
         self.ui.pushButton_regist.setEnabled(False)
         self.timer_record.stop()
 
-
-
+        # 重置状态板，防止上次残留状态误触发
+        for cam in self.cameras_to_save:
+            self.save_status[cam] = False
+        self.NS.recording_in_progress = True
 
         for devInfo in self.DevList:
             self.record_save[devInfo.GetSn()] = 1

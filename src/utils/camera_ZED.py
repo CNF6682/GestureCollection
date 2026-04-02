@@ -17,11 +17,12 @@ import pyzed.sl as sl
 import cv2
 
 class ZEDTask:
-    def __init__(self,NS,record_save,frameRates):
+    def __init__(self,NS,record_save,frameRates,save_status):
 
         self.NS = NS # namespace
         self.record_save = record_save # record_save flag
         self.frameRates = frameRates # frameRates dict
+        self.save_status = save_status # 存盘完成状态板
 
         self.executor = futures.ThreadPoolExecutor(max_workers=1) # 储存线程
 
@@ -113,7 +114,7 @@ class ZEDTask:
         self.Depth_buffer = []
 
         print('zed采集完成')
-        self.NS.ZED_saved = True
+        self.save_status["ZED"] = True
 
     def run(self,pipe,pipe2,stop_event):
         num=0
@@ -227,6 +228,6 @@ class ZEDTask:
 
 
 
-def runZED(pipe,pipe2,stop_event,NS,record_save,frameRates):
-    task = ZEDTask(NS,record_save,frameRates)
+def runZED(pipe,pipe2,stop_event,NS,record_save,frameRates,save_status):
+    task = ZEDTask(NS,record_save,frameRates,save_status)
     task.run(pipe,pipe2,stop_event)

@@ -57,12 +57,13 @@ import os
 import concurrent.futures as futures
 
 class EventCamera:
-    def __init__(self,NS,record_save,frameRates,pipe,cache_duration_seconds=4.0):
+    def __init__(self,NS,record_save,frameRates,pipe,save_status,cache_duration_seconds=4.0):
 
         self.NS = NS
         self.record_save = record_save
         self.frameRates = frameRates
         self.pipe = pipe
+        self.save_status = save_status
         self.cache_duration_seconds = cache_duration_seconds
         self.executor = futures.ThreadPoolExecutor(max_workers=1)
 
@@ -166,6 +167,7 @@ class EventCamera:
             # print(self.event_store.size())
             #重新初始化event_store
             self.event_store = dv.EventStore()
+            self.save_status["event"] = True
         #
         #
         # except Exception as e:
@@ -217,8 +219,8 @@ class EventCamera:
 #
 # args = parser.parse_args()
 
-def runEventCamera(pipe,stop_event,NS,record_save,frameRates):
-    task = EventCamera(NS,record_save,frameRates,pipe)
+def runEventCamera(pipe,stop_event,NS,record_save,frameRates,save_status):
+    task = EventCamera(NS,record_save,frameRates,pipe,save_status)
     task.run(stop_event)
 
 

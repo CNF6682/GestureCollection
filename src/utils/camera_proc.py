@@ -22,12 +22,13 @@ def setROI(hCamera,iWidth,iHeight,iHOffsetFOV,iVOffsetFOV):
     mvsdk.CameraSetImageResolution(hCamera, sRoiReslution)
 
 class camera_task:
-    def __init__(self,DevInfo,NS,record_save,frameRates,ROI):
+    def __init__(self,DevInfo,NS,record_save,frameRates,ROI,save_status):
         self.DevInfo = DevInfo
         self.NS = NS
         self.record_save = record_save
         self.frameRates = frameRates
         self.ROI = ROI
+        self.save_status = save_status
         #缓存
         self.imgs_buffer = []
         self.executor = futures.ThreadPoolExecutor(max_workers=1)
@@ -128,10 +129,7 @@ class camera_task:
 
         print('{}采集完成'.format(camera))
         # time.sleep(0.1)
-        if self.DevInfo.GetSn()=="044011420148":   #041182220233  044062320120
-            self.NS.RGB1_saved=True
-        elif self.DevInfo.GetSn() == "043051920299":
-            self.NS.inf_saved = True
+        self.save_status[self.DevInfo.GetSn()] = True  # 所有相机统一回报
 
     def setCrop(self):
         if self.DevInfo.GetSn()=="044011420148":   #041182220233  044062320120
@@ -257,11 +255,11 @@ class camera_task:
 # import setproctitle
 # setproctitle.setproctitle(f"MindVision")
 # import ctypes
-def run_camera(devinfo,pipe,stop_event,NS,record_save,frameRates,ROI):
+def run_camera(devinfo,pipe,stop_event,NS,record_save,frameRates,ROI,save_status):
     # ctypes.windll.kernel32.SetConsoleTitleW(f"MindVision_{devinfo.GetSn()}")
 
-    camera = camera_task(devinfo,NS,record_save,frameRates,ROI)
-    camera.run(pipe,stop_event) 
+    camera = camera_task(devinfo,NS,record_save,frameRates,ROI,save_status)
+    camera.run(pipe,stop_event)
     
     
 if __name__ == "__main__":
