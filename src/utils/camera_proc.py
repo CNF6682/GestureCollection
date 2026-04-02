@@ -111,11 +111,15 @@ class camera_task:
         if not os.path.exists(sample_camera_path):
             os.mkdir(sample_camera_path)
 
-        for index, img in enumerate(self.imgs_buffer):
-            img_path = os.path.join(sample_camera_path, '%03d.jpg' % (index + 1))
-            # cv2.imshow("{}".format(camera), img)
-            # cv2.waitKey(1)
-            cv2.imwrite(img_path, img)
+        for index, img in enumerate(self.template):
+
+            if index<240:
+                img_path = os.path.join(sample_camera_path, '%03d.jpg' % (index + 1))
+                # cv2.imshow("{}".format(camera), img)
+                # cv2.waitKey(1)
+                cv2.imwrite(img_path, img)
+            if index >= 240 :
+                break
 
 
         self.imgs_buffer = []
@@ -124,6 +128,10 @@ class camera_task:
 
         print('{}采集完成'.format(camera))
         # time.sleep(0.1)
+        if self.DevInfo.GetSn()=="044011420148":   #041182220233  044062320120
+            self.NS.RGB1_saved=True
+        elif self.DevInfo.GetSn() == "043051920299":
+            self.NS.inf_saved = True
 
     def setCrop(self):
         if self.DevInfo.GetSn()=="044011420148":   #041182220233  044062320120
@@ -210,11 +218,11 @@ class camera_task:
                 # frame = cv2.resize(frame, (640,480), interpolation = cv2.INTER_LINEAR)
                 if num_frames % 10 == 0:
                     frame_show = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                    frame_show = cv2.resize(frame_show, (160,160))
+                    frame_show = cv2.resize(frame_show, (100,100))
                     pipe.send(frame_show)
                     self.frameRates[self.DevInfo.GetSn()] = fps
 
-                if self.record_save[self.DevInfo.GetSn()]==1:
+                if self.record_save.is_set():#self.record_save[self.DevInfo.GetSn()]==1:
                     self.imgs_buffer.append(frame)
                     # 记录采集进度
                     if self.DevInfo.GetSn() == "044011420148":
@@ -223,11 +231,13 @@ class camera_task:
                         start_time2 = time.time()
                     # print(len(self.imgs_buffer))
                     if len(self.imgs_buffer) == self.NS.sample_frame:
+                        self.template=self.imgs_buffer[:self.NS.sample_frame]
+                        self.record_save.clear()  # self.record_save[self.DevInfo.GetSn()]==0
                         end_time2 = time.time()
                         # print("采集完成，耗时：",end_time2-start_time2)
                         self.executor.submit(self.save_video)
 
-                        self.record_save[self.DevInfo.GetSn()] = 0
+
 
             except mvsdk.CameraException as e:
                 if e.error_code != mvsdk.CAMERA_STATUS_TIME_OUT:
@@ -244,8 +254,12 @@ class camera_task:
 # def run_camera(index,pipe,stop_event):
 #     camera = camera_task(index)
 #     camera.run(pipe,stop_event)
-    
+# import setproctitle
+# setproctitle.setproctitle(f"MindVision")
+# import ctypes
 def run_camera(devinfo,pipe,stop_event,NS,record_save,frameRates,ROI):
+    # ctypes.windll.kernel32.SetConsoleTitleW(f"MindVision_{devinfo.GetSn()}")
+
     camera = camera_task(devinfo,NS,record_save,frameRates,ROI)
     camera.run(pipe,stop_event) 
     

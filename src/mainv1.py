@@ -68,9 +68,6 @@ class Main_Window(QtWidgets.QMainWindow):
         # ZED保存标志
         self.NS.ZED_saved=False
 
-        self.NS.RGB1_saved=False
-        self.NS.inf_saved=False
-
 
         print('采样帧数为{}'.format(self.NS.sample_frame))
         #保存路径
@@ -87,7 +84,7 @@ class Main_Window(QtWidgets.QMainWindow):
 
         self.timer_imshow=QtCore.QTimer(self)
         self.timer_imshow.timeout.connect(self.update_frames)
-        self.timer_imshow.start(1)  # 每1ms检查一次新帧
+        self.timer_imshow.start(10)  # 每1ms检查一次新帧
         self.fakeTime=0 #理论系统时间
 
         self.timer_record=QtCore.QTimer(self)
@@ -110,8 +107,7 @@ class Main_Window(QtWidgets.QMainWindow):
         self.sample_time = self.ui.lineEdit_NUM.text()
         self.fpath = self.ui.lineEdit_sample_save_path.text() #r"F:\dataset"
         # self.fpath = r"F:\dataset"
-        # self.fpath=r"E:\datasettest"
-        self.fpath=r"F:\dataset"
+        self.fpath=r"E:\dataset"
         # self.fpath = r"C:\Users\Administrator.DESKTOP-ATGBNLB\Desktop\dataCollectionCode\GestureCollection\data"
 
         #帧数改变
@@ -199,6 +195,8 @@ class Main_Window(QtWidgets.QMainWindow):
                     self.show_windows.append(self.ui.label_RGB_5)
                     self.frameRates_label.append(self.ui.label_frameRates_5)
 
+
+
                 elif DevInfo.GetSn() == "044062320137": #6  044030620195
                     self.show_windows.append(self.ui.label_RGB_6)
                     self.frameRates_label.append(self.ui.label_frameRates_6)
@@ -217,7 +215,7 @@ class Main_Window(QtWidgets.QMainWindow):
                     self.frameRates_label.append(self.ui.label_frameRates_inf)
 
 
-                process = Process(target=run_camera, args=(DevInfo,child_conn,stop_event,self.NS,record_event,self.frameRates,self.ROI),name=f"{DevInfo.GetSn()}")
+                process = Process(target=run_camera, args=(DevInfo,child_conn,stop_event,self.NS,record_event,self.frameRates,self.ROI))
                 process.daemon = True  # <--- [添加] 设置为守护进程，确保主程序退出时子进程也退出
                 process.start()
                 self.parent_conns.append(parent_conn)
@@ -291,7 +289,7 @@ class Main_Window(QtWidgets.QMainWindow):
                 # 每个相机的帧率
                 self.frameRates["event"] = 0
 
-                process = Process(target=runEventCamera, args=(child_conn, stop_event, self.NS, record_event, self.frameRates),name=f"event")
+                process = Process(target=runEventCamera, args=(child_conn, stop_event, self.NS, record_event, self.frameRates))
                 process.daemon = True  # <--- [添加] 设置为守护进程，确保主程序退出时子进程也退出
                 process.start()
 
@@ -319,9 +317,7 @@ class Main_Window(QtWidgets.QMainWindow):
             # 每个相机的帧率
             self.frameRates["ZED"] = 0
 
-
-
-            process = Process(target=runZED, args=(child_conn, child_conn_2, stop_event, self.NS, record_event, self.frameRates),name=f"ZED")
+            process = Process(target=runZED, args=(child_conn, child_conn_2, stop_event, self.NS, record_event, self.frameRates))
             process.daemon = True  # <--- [添加] 设置为守护进程，确保主程序退出时子进程也退出
             process.start()
 
@@ -479,7 +475,7 @@ class Main_Window(QtWidgets.QMainWindow):
             # else:
                 # self.ui.pushButton_regist.setEnabled(False)  # 禁用注册按钮
         # print(self.fakeTime)
-        if int(self.NS.sampled*100)%5==0 and int(self.NS.sampled*100)!=0 :
+        if int(self.NS.sampled*100)%10==0 and int(self.NS.sampled*100)!=0 :
             # print("sampled:", int(self.NS.sampled*100))
             self.ui.progressBar.setValue(int(self.NS.sampled*100))
             if int(self.NS.sampled*100)==100:
@@ -487,13 +483,11 @@ class Main_Window(QtWidgets.QMainWindow):
                 self.NS_audio.audio_stop=True
 
 
-        if self.NS.ZED_saved== True and self.NS.RGB1_saved == True and self.NS.inf_saved == True:
+        if self.NS.ZED_saved== True:
             # QMessageBox.warning(self, "Warning", "本次采集完成")
             self.NS_audio.audio_saved=True
             self.ui.textBrowser_log.append("本次采集完成")
             self.NS.ZED_saved=False
-            self.NS.RGB1_saved=False
-            self.NS.inf_saved=False
             self.analyze()
             self.sample_update(1)
 
@@ -564,8 +558,6 @@ class Main_Window(QtWidgets.QMainWindow):
         # self.session + "_" + self.lr + "_" + self.ID + "_" + self.gesture_type + "_" + self.sample_time
         if flag==0:
             img_path = self.fpath + '/img'
-            if not os.path.isdir(img_path):
-                os.makedirs(img_path)
             samples=os.listdir(img_path)
             # 按照计算的键值进行降序排序
             samples.sort(key=self.sort_key, reverse=True)

@@ -21,7 +21,7 @@ REMOTE_PASSWORD = "biplab6666"  # <-- 修改为远程用户密码 (如果使用�
 # REMOTE_PKEY_PASSPHRASE = "your_passphrase"      # <-- 如果私钥有密码短语，请填写
 
 # 远程目标目录 (Linux 路径)
-REMOTE_BASE_DIR = "/gesture_data/DHGA_Plus/"  # <-- 修改为远程服务器上的目标目录
+REMOTE_BASE_DIR = "/NewData/dataPart1/"  # <-- 修改为远程服务器上的目标目录
 
 # 可选: 是否在远程服务器上为每个上传的文件夹创建同名父目录
 CREATE_REMOTE_PARENT_DIR = True
@@ -217,15 +217,16 @@ def upload_folder(sftp, local_folder_path, remote_folder_path):
             # if uploaded_files >= this_time_files:
             #     break
 
-            # if uploaded_files % 500 == 0 and uploaded_files > 0:
-            #     time.sleep(5)  # 每上传1000个文件，休息5秒，防止过快
-            #     print("  休息5秒，防止过快...")
 
-            # if uploaded_files < 1500000:
+
+            # if uploaded_files < 1951140:
             #     uploaded_files += 1
             #     print("  已上传文件数:", uploaded_files)
             #     continue
 
+            if uploaded_files % 2000 == 0 and uploaded_files > 0:
+                time.sleep(20)  # 每上传1000个文件，休息20秒，防止过快
+                print("  休息5秒，防止过快...")
 
             if upload_file_with_progress(sftp, local_file_path, remote_file_path):
                 uploaded_files += 1

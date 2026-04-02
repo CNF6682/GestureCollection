@@ -189,7 +189,7 @@ class EventCamera:
                 self.slicer.accept(events)
                 # print("events.shape",events)
 
-                if self.record_save["event"] == 1:
+                if self.record_save.is_set():#self.record_save["event"] == 1:
                     #触发事件存储
                     num_events += 1
                     #记录开始时间
@@ -202,7 +202,7 @@ class EventCamera:
                     # print(current_time - start_time)
                     if current_time - start_time >= self.cache_duration_seconds:
                         print("Saving events to disk...")
-                        self.record_save["event"] = 0
+                        self.record_save.clear()  # self.record_save["event"] = 0
                         self.executor.submit(self.save_event)
                         num_events = 0
             # except Exception as e:
