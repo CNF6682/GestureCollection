@@ -4,7 +4,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 def check_folders():
-    base_dir = r"E:\dataset\img"
+    base_dir = r"H:\dataset\img"
 
     # 定义预期的子文件夹及其文件数量
     SUBFOLDERS_REQUIREMENTS = {
@@ -22,7 +22,7 @@ def check_folders():
     }
 
     print("🎯 文件夹完整性检查程序")
-    print("📁 检查目录: E:\\dataset\\img")
+    print("📁 检查目录: H:\\dataset\\img")
     print("🔍 格式: t_id_hand_gesture_num")
     print("📂 子文件夹要求:", ", ".join([f"{k}({v}文件)" for k, v in SUBFOLDERS_REQUIREMENTS.items()]))
     print("⚡ 使用多线程加速检查")

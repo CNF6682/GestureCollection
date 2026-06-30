@@ -50,6 +50,7 @@
 
 import datetime
 import time
+import threading
 import dv_processing as dv
 import cv2
 import argparse
@@ -77,7 +78,11 @@ class EventCamera:
 
 
         #event camera在发现某处亮度变化时,就会马上输出一个事件,其响应特别快(~1us= HZ,比IMU还要快)，因此我们需要一个缓存机制来存储事件
-        self.event_store = dv.EventStore()
+        self.event_store = dv.EventStore()  # L1: 采集中的事件缓冲
+        self.l2_event_store = None           # L2: 待落盘的事件数据
+        self.l2_path = ""
+        self.l2_ready = threading.Event()
+        self.l2_ready.set()  # 初始状态: L2空闲
         self.start_time = time.time()
 
         self.num_frames_show = 0
@@ -147,27 +152,36 @@ class EventCamera:
     #             self.slicer.accept(events)
     #
     #             self.writer.writeEvents(events, streamName='events')
-    def save_event(self):
-        # try:
-            print("Saving events...")
+    def encode_to_l2(self):
+        """L1 event_store → L2 引用转移 (几乎零开销)"""
+        # 将当前 event_store 引用转移到 L2
+        self.l2_event_store = self.event_store
+        self.l2_path = self.NS.save_id_path
+        # 为 L1 创建新的 event_store，继续接收事件
+        self.event_store = dv.EventStore()
+        # 提交后台落盘
+        self.l2_ready.clear()
+        self.executor.submit(self.flush_l2_to_disk)
+        # 立即回报"采集完成"（数据已安全进入L2）
+        print('Event采集完成，数据已进入L2缓存')
+        self.save_status["event"] = True
 
-
-            path=self.NS.save_id_path
+    def flush_l2_to_disk(self):
+        """L2 event_store → SATA HDD (I/O密集, 后台线程)"""
+        try:
+            print("Saving events to HDD...")
+            path = self.l2_path
             sample_camera_path = os.path.join(path, "events")
             if not os.path.exists(sample_camera_path):
                 os.mkdir(sample_camera_path)
             sample_camera_path = os.path.join(sample_camera_path, "event.aedat4")
-            print("sample_camera_path",sample_camera_path)
-            self.writer = dv.io.MonoCameraWriter(sample_camera_path, self.camera)
-            self.writer.writeEvents(self.event_store, streamName='events')
-            # Clear the event_store
-            print("Events saved")
-            # print(self.event_store.size())
-            # self.event_store.erase(0, self.event_store.size())
-            # print(self.event_store.size())
-            #重新初始化event_store
-            self.event_store = dv.EventStore()
-            self.save_status["event"] = True
+            print("sample_camera_path", sample_camera_path)
+            writer = dv.io.MonoCameraWriter(sample_camera_path, self.camera)
+            writer.writeEvents(self.l2_event_store, streamName='events')
+            self.l2_event_store = None  # 释放 L2 内存
+            print("Event落盘完成")
+        finally:
+            self.l2_ready.set()
         #
         #
         # except Exception as e:
@@ -203,9 +217,12 @@ class EventCamera:
                     current_time = time.time()
                     # print(current_time - start_time)
                     if current_time - start_time >= self.cache_duration_seconds:
-                        print("Saving events to disk...")
+                        print("Event camera采集完成，开始转移到L2...")
                         self.record_save.clear()  # self.record_save["event"] = 0
-                        self.executor.submit(self.save_event)
+                        # 等待上一次L2落盘完成（防止覆盖）
+                        self.l2_ready.wait()
+                        # 同步转移到L2，然后异步落盘
+                        self.encode_to_l2()
                         num_events = 0
             # except Exception as e:
             #     print("Failed to run event camera: ", e)
@@ -227,7 +244,7 @@ def runEventCamera(pipe,stop_event,NS,record_save,frameRates,save_status):
 if __name__ == '__main__':
     # camera = dv.io.CameraCapture()
     visualizer = dv.visualization.EventVisualizer((640,480))
-    reader = dv.io.MonoCameraRecording(r"C:\Users\Administrator.DESKTOP-ATGBNLB\Desktop\dataCollectionCode\GestureCollection\data\img\1_21_1_10_4\events\event.aedat4")
+    reader = dv.io.MonoCameraRecording(r"F:\dataset\img\2_32_0_9_3\events\event.aedat4")
 
     cv2.namedWindow("Preview", cv2.WINDOW_NORMAL)
     # Run the loop while camera is still connected
@@ -255,7 +272,7 @@ if __name__ == '__main__':
 
     # Create an event slicer, this will only be used events only camera
     slicer = dv.EventStreamSlicer()
-    slicer.doEveryTimeInterval(datetime.timedelta(milliseconds=1), preview_events)
+    slicer.doEveryTimeInterval(datetime.timedelta(milliseconds=30), preview_events)
 
     while reader.isRunning():
         # Read batch of events

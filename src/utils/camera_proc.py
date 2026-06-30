@@ -29,8 +29,13 @@ class camera_task:
         self.frameRates = frameRates
         self.ROI = ROI
         self.save_status = save_status
-        #缓存
+        # L1缓存: raw numpy frames
         self.imgs_buffer = []
+        # L2缓存: encoded JPEG bytes
+        self.l2_cache = []
+        self.l2_path = ""
+        self.l2_ready = threading.Event()
+        self.l2_ready.set()  # 初始状态: L2空闲
         self.executor = futures.ThreadPoolExecutor(max_workers=1)
 
         # 打开相机
@@ -86,50 +91,54 @@ class camera_task:
 
 
 
-    def save_video(self):
-        if self.DevInfo.GetSn()=="044011420148":   #041182220233  044062320120
-            camera = "RGB_1"
-        elif self.DevInfo.GetSn()=="044030620196":  #044062320105   042092320674
-            camera = "RGB_2"
-        elif self.DevInfo.GetSn()=="044062320120":
-            camera = "RGB_3"
-        elif self.DevInfo.GetSn()=="044062320129":
-            camera ="RGB_4"
-        elif self.DevInfo.GetSn()=="044030620195":
-            camera ="RGB_5"
-        elif self.DevInfo.GetSn()=="043051920299":
-            camera="inf"
-        elif self.DevInfo.GetSn()=="044062320137":
-            camera ="RGB_6"
-        elif self.DevInfo.GetSn()=="044062320105":
-            camera="RGB_7"
-        elif self.DevInfo.GetSn()=="042101120056":
-            camera="RGB_8"
+    def _get_camera_name(self):
+        sn_map = {
+            "044011420148": "RGB_1",
+            "044030620196": "RGB_2",
+            "044062320120": "RGB_3",
+            "044062320129": "RGB_4",
+            "044030620195": "RGB_5",
+            "043051920299": "inf",
+            "044062320137": "RGB_6",
+            "044062320105": "RGB_7",
+            "042101120056": "RGB_8",
+        }
+        return sn_map.get(self.DevInfo.GetSn(), "unknown")
 
-
-        path=self.NS.save_id_path
-        sample_camera_path = os.path.join(path, camera)
-        if not os.path.exists(sample_camera_path):
-            os.mkdir(sample_camera_path)
-
-        for index, img in enumerate(self.template):
-
-            if index<240:
-                img_path = os.path.join(sample_camera_path, '%03d.jpg' % (index + 1))
-                # cv2.imshow("{}".format(camera), img)
-                # cv2.waitKey(1)
-                cv2.imwrite(img_path, img)
-            if index >= 240 :
-                break
-
-
+    def encode_to_l2(self):
+        """L1 raw numpy → L2 JPEG bytes (CPU密集, 同步执行)"""
+        self.l2_cache = []
+        for img in self.template:
+            ret, buf = cv2.imencode('.jpg', img)
+            if ret:
+                self.l2_cache.append(buf)
+        self.template = []
         self.imgs_buffer = []
-        # if self.DevInfo.GetSn() == "044011420148":
-        #     # self.NS.ZED_saved = True
+        # 提交后台落盘
+        self.l2_ready.clear()
+        self.executor.submit(self.flush_l2_to_disk)
+        # 立即回报"采集完成"（数据已安全进入L2）
+        print('{}采集完成，数据已进入L2缓存'.format(self._get_camera_name()))
+        self.save_status[self.DevInfo.GetSn()] = True
 
-        print('{}采集完成'.format(camera))
-        # time.sleep(0.1)
-        self.save_status[self.DevInfo.GetSn()] = True  # 所有相机统一回报
+    def flush_l2_to_disk(self):
+        """L2 JPEG bytes → SATA HDD (I/O密集, 后台线程)"""
+        try:
+            camera = self._get_camera_name()
+            path = self.l2_path
+            sample_camera_path = os.path.join(path, camera)
+            if not os.path.exists(sample_camera_path):
+                os.mkdir(sample_camera_path)
+            for index, buf in enumerate(self.l2_cache):
+                if index >= 240:
+                    break
+                img_path = os.path.join(sample_camera_path, '%03d.jpg' % (index + 1))
+                with open(img_path, 'wb') as f:
+                    f.write(buf.tobytes())
+            self.l2_cache = []
+            print('{}落盘完成'.format(camera))
+        finally:
+            self.l2_ready.set()
 
     def setCrop(self):
         if self.DevInfo.GetSn()=="044011420148":   #041182220233  044062320120
@@ -230,10 +239,13 @@ class camera_task:
                     # print(len(self.imgs_buffer))
                     if len(self.imgs_buffer) == self.NS.sample_frame:
                         self.template=self.imgs_buffer[:self.NS.sample_frame]
+                        self.l2_path = self.NS.save_id_path
                         self.record_save.clear()  # self.record_save[self.DevInfo.GetSn()]==0
                         end_time2 = time.time()
-                        # print("采集完成，耗时：",end_time2-start_time2)
-                        self.executor.submit(self.save_video)
+                        # 等待上一次L2落盘完成（防止覆盖）
+                        self.l2_ready.wait()
+                        # 同步编码到L2，然后异步落盘
+                        self.encode_to_l2()
 
 
 

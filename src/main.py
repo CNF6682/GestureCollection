@@ -110,7 +110,7 @@ class Main_Window(QtWidgets.QMainWindow):
         self.fpath = self.ui.lineEdit_sample_save_path.text() #r"F:\dataset"
         # self.fpath = r"F:\dataset"
         # self.fpath=r"E:\datasettest"
-        self.fpath=r"F:\dataset"
+        self.fpath=r"H:\dataset"
         # self.fpath = r"C:\Users\Administrator.DESKTOP-ATGBNLB\Desktop\dataCollectionCode\GestureCollection\data"
 
         #帧数改变

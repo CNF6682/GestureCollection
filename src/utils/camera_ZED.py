@@ -10,6 +10,7 @@ import cv2
 import numpy as np
 import pyrealsense2 as rs
 import time
+import threading
 import concurrent.futures as futures
 import os
 
@@ -25,6 +26,13 @@ class ZEDTask:
         self.save_status = save_status # 存盘完成状态板
 
         self.executor = futures.ThreadPoolExecutor(max_workers=1) # 储存线程
+
+        # L2缓存
+        self.l2_rgb_cache = []
+        self.l2_depth_cache = []
+        self.l2_path = ""
+        self.l2_ready = threading.Event()
+        self.l2_ready.set()  # 初始状态: L2空闲
 
         self.zed = sl.Camera()
 
@@ -88,33 +96,41 @@ class ZEDTask:
             return None, None,None,None,False
 
 
-    def save_video(self):
-
-        path=self.NS.save_id_path
-        sample_camera_path_1 = os.path.join(path, "ZED_RGB")
-        sample_camera_path_2 = os.path.join(path, "ZED_Depth")
-        if not os.path.exists(sample_camera_path_1):
-            os.mkdir(sample_camera_path_1)
-        if not os.path.exists(sample_camera_path_2):
-            os.mkdir(sample_camera_path_2)
-
-        for index, img in enumerate(self.RGB_buffer):
-            if index<120:
-                img_path = os.path.join(sample_camera_path_1, '%03d.jpg' % (index + 1))
-                img_path2 = os.path.join(sample_camera_path_2, '%03d.jpg' % (index + 1))
-                # cv2.imshow("{}".format(camera), img)
-                # cv2.waitKey(1)
-                # print("img_path:",img_path)
-
-                cv2.imwrite(img_path, img)
-                cv2.imwrite(img_path2, self.Depth_buffer[index])
-
-
+    def encode_to_l2(self):
+        """L1 raw numpy → L2 JPEG bytes (CPU密集, 同步执行)"""
+        self.l2_rgb_cache = [cv2.imencode('.jpg', img)[1] for img in self.RGB_buffer]
+        self.l2_depth_cache = [cv2.imencode('.jpg', img)[1] for img in self.Depth_buffer]
         self.RGB_buffer = []
         self.Depth_buffer = []
-
-        print('zed采集完成')
+        # 提交后台落盘
+        self.l2_ready.clear()
+        self.executor.submit(self.flush_l2_to_disk)
+        # 立即回报"采集完成"（数据已安全进入L2）
+        print('ZED采集完成，数据已进入L2缓存')
         self.save_status["ZED"] = True
+
+    def flush_l2_to_disk(self):
+        """L2 JPEG bytes → SATA HDD (I/O密集, 后台线程)"""
+        try:
+            path = self.l2_path
+            sample_camera_path_1 = os.path.join(path, "ZED_RGB")
+            sample_camera_path_2 = os.path.join(path, "ZED_Depth")
+            if not os.path.exists(sample_camera_path_1):
+                os.mkdir(sample_camera_path_1)
+            if not os.path.exists(sample_camera_path_2):
+                os.mkdir(sample_camera_path_2)
+            for index in range(min(120, len(self.l2_rgb_cache))):
+                img_path = os.path.join(sample_camera_path_1, '%03d.jpg' % (index + 1))
+                with open(img_path, 'wb') as f:
+                    f.write(self.l2_rgb_cache[index].tobytes())
+                img_path2 = os.path.join(sample_camera_path_2, '%03d.jpg' % (index + 1))
+                with open(img_path2, 'wb') as f:
+                    f.write(self.l2_depth_cache[index].tobytes())
+            self.l2_rgb_cache = []
+            self.l2_depth_cache = []
+            print('ZED落盘完成')
+        finally:
+            self.l2_ready.set()
 
     def run(self,pipe,pipe2,stop_event):
         num=0
@@ -205,10 +221,12 @@ class ZEDTask:
                         # print(len(self.imgs_buffer))
                         if len(self.RGB_buffer) == 120:
                             end_time2 = time.time()
-                            # print("采集完成，耗时：",end_time2-start_time2)
-                            self.executor.submit(self.save_video)
-
+                            self.l2_path = self.NS.save_id_path
                             self.record_save.clear()  # self.record_save["ZED"] = 0
+                            # 等待上一次L2落盘完成（防止覆盖）
+                            self.l2_ready.wait()
+                            # 同步编码到L2，然后异步落盘
+                            self.encode_to_l2()
 
                     end=time.time()
                     # print("time:",1/(end - start))
